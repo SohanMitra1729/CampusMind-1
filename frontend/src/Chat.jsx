@@ -20,6 +20,12 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
   const [complaintResult, setComplaintResult] = useState(null);
   const [votedComplaints, setVotedComplaints] = useState(new Set());
 
+  // Hostel + room location state (for complaint form)
+  const [hostels, setHostels] = useState([]);
+  const [selectedHostelId, setSelectedHostelId] = useState('');
+  const [roomNumber, setRoomNumber] = useState('');
+  // isRoomSpecific is derived from complaintPending.needsRoom — set by the AI agent
+
   // My Complaints panel
   const [showMyComplaints, setShowMyComplaints] = useState(false);
   const [myComplaints, setMyComplaints] = useState([]);
@@ -58,6 +64,14 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
       console.error('Failed to fetch notifications', e);
     }
   };
+
+  // Fetch hostels for dropdown
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/api/hostels')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setHostels(data))
+      .catch(() => {});
+  }, []);
 
   const formatNotifTime = (iso) => {
     if (!iso) return '';
@@ -219,6 +233,8 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
     // Clear previous complaint banner on new message
     setComplaintPending(null);
     setComplaintResult(null);
+    setSelectedHostelId('');
+    setRoomNumber('');
 
     const metadata_filter = selectedSource ? { source: selectedSource } : null;
 
@@ -234,9 +250,10 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
         .then(data => {
           if (data?.is_complaint && data.confidence >= 0.6) {
             setComplaintPending({
-              text:     inputText,
-              category: data.category || 'general',
-              title:    data.title    || inputText.slice(0, 60),
+              text:      inputText,
+              category:  data.category  || 'general',
+              title:     data.title     || inputText.slice(0, 60),
+              needsRoom: data.needs_room === true,  // set by AI agent
             });
           }
         })
@@ -291,18 +308,31 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
   // ── Submit complaint when user clicks the banner ──────────────────────────
   const handleSubmitComplaint = async () => {
     if (!complaintPending || complaintSubmitting) return;
+    if (!selectedHostelId) {
+      alert('Please select your hostel before submitting.');
+      return;
+    }
+    if (complaintPending.needsRoom && !roomNumber.trim()) {
+      alert('Please enter your room number — this complaint appears to be room-specific.');
+      return;
+    }
     setComplaintSubmitting(true);
     try {
       const res = await fetch('http://127.0.0.1:8000/api/complaint', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: complaintPending.text, user_info: user }),
+        body: JSON.stringify({
+          text: complaintPending.text,
+          user_info: user,
+          hostel_id: selectedHostelId,
+          room_number: complaintPending.needsRoom && roomNumber.trim() ? roomNumber.trim() : null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Submission failed');
       setComplaintResult(data);
       setComplaintPending(null);
-      fetchMyComplaints(); // refresh my complaints panel
+      fetchMyComplaints();
     } catch (err) {
       setComplaintResult({ error: err.message });
       setComplaintPending(null);
@@ -629,12 +659,52 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
                 <p className="complaint-banner-msg">
                   Would you like to formally submit this as a complaint? Admin will review and respond.
                 </p>
+
+                {/* ── Hostel + Room (auto-decided by AI) ── */}
+                <div className="complaint-location-fields">
+                  {/* Hostel — always required */}
+                  <div className="complaint-location-row">
+                    <label className="complaint-location-label" htmlFor="hostel-select">🏠 Hostel <span style={{color:'#f87171'}}>*</span></label>
+                    <select
+                      id="hostel-select"
+                      className="complaint-hostel-select"
+                      value={selectedHostelId}
+                      onChange={e => setSelectedHostelId(e.target.value)}
+                    >
+                      <option value="">Select hostel…</option>
+                      {hostels.map(h => (
+                        <option key={h.id} value={h.id}>{h.code} – {h.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Room number — only shown when AI decides it is room-specific */}
+                  {complaintPending.needsRoom && (
+                    <div className="complaint-location-row">
+                      <label className="complaint-location-label" htmlFor="room-input">
+                        🚪 Room Number <span style={{color:'#f87171'}}>*</span>
+                      </label>
+                      <input
+                        id="room-input"
+                        type="text"
+                        className="complaint-room-input"
+                        placeholder="e.g. 204"
+                        value={roomNumber}
+                        onChange={e => setRoomNumber(e.target.value)}
+                        maxLength={10}
+                        autoFocus
+                      />
+                      <span className="room-auto-hint">🤖 AI detected a room-specific issue</span>
+                    </div>
+                  )}
+                </div>
+
                 <div className="complaint-banner-actions">
                   <button
                     type="button"
                     className="complaint-submit-btn"
                     onClick={handleSubmitComplaint}
-                    disabled={complaintSubmitting}
+                    disabled={complaintSubmitting || !selectedHostelId || (complaintPending.needsRoom && !roomNumber.trim())}
                   >
                     {complaintSubmitting ? '⏳ Submitting…' : '📝 Submit Complaint'}
                   </button>

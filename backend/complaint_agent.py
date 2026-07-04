@@ -51,14 +51,16 @@ STATUS_LABELS = {
 def classify_complaint(text: str) -> dict:
     """
     Determine if the input text is a complaint or grievance.
-    Single Groq call, ~60 tokens — must stay fast (<300ms).
+    Single Groq call — must stay fast (<300ms).
 
     Returns:
         {
             "is_complaint": bool,
-            "category":     str,   # hostel|academic|admin|facility|mess|transport|general|not_complaint
-            "title":        str,   # short complaint title (empty if not a complaint)
-            "confidence":   float
+            "category":     str,    # hostel|academic|admin|facility|mess|transport|general|not_complaint
+            "title":        str,    # short complaint title (empty if not a complaint)
+            "confidence":   float,
+            "needs_room":   bool,   # True if complaint is specific to a single room
+            "staff_role":   str,    # electrical|cleaning|mess_manager|watchmen (who should handle it)
         }
     """
     excerpt = text[:400].strip()
@@ -67,35 +69,54 @@ def classify_complaint(text: str) -> dict:
 Student message:
 \"\"\"{excerpt}\"\"\"
 
-Is this a complaint or grievance? Respond with a single JSON object only (no markdown):
+Respond with a single JSON object only (no markdown):
 {{
-  "is_complaint": <true if this is a complaint/grievance/problem, false if it's a general question>,
+  "is_complaint": <true if this is a complaint/grievance/problem, false if it is a general question>,
   "category": "<hostel|academic|admin|facility|mess|transport|general|not_complaint>",
   "title": "<short complaint title max 60 chars, empty string if not a complaint>",
-  "confidence": <0.0-1.0>
+  "confidence": <0.0-1.0>,
+  "needs_room": <true if the complaint is clearly about a specific room (e.g. "my room", "room 204", "my bathroom"), false if it affects the whole hostel/building/mess/campus>,
+  "staff_role": "<which staff role should handle this: electrical | cleaning | mess_manager | watchmen | none>"
 }}
 
-Rules:
-- is_complaint = true ONLY for complaints, grievances, issues, problem reports
-- "What is the syllabus?" → NOT a complaint
-- "My room has no water" → hostel complaint
-- "WiFi is not working in the block" → facility complaint
-- "My internal marks are incorrect" → academic complaint
-- "Mess food quality is poor" → mess complaint
-- Keep title concise and factual, start with the core problem"""
+staff_role selection rules (pick the BEST match based on the actual problem, not just the category):
+- electrical  : lights, fans, power, switches, sockets, electrical fittings, wiring, inverter, generator
+- cleaning    : garbage, cleanliness, dirty bathroom, waste, sweeping, mopping, sanitation, cockroaches, pest
+- mess_manager: food quality, meal timing, mess hygiene, canteen, water in mess, dining
+- watchmen    : security, entry/exit, gate, theft, outsiders, curfew, general hostel safety
+- none        : academic, admin, transport issues (not handled by hostel staff)
+
+needs_room rules:
+- true  : "my room", "my fan", "my bathroom", "room 204" — affects one specific room
+- false : "entire hostel", "block", "common area", "mess", "campus", "WiFi" — affects multiple people
+
+Examples:
+- "My room light is not working" → hostel, electrical, needs_room=true
+- "Light in the corridor is broken" → hostel, electrical, needs_room=false
+- "Mess food has insects" → mess, mess_manager, needs_room=false
+- "Garbage not collected in my room" → hostel, cleaning, needs_room=true
+- "Common bathroom is very dirty" → hostel, cleaning, needs_room=false
+- "Stranger entered the hostel" → hostel, watchmen, needs_room=false
+- "My internal marks are wrong" → academic, none, needs_room=false"""
 
     try:
         resp = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
             temperature=0.0,
-            max_tokens=100,
+            max_tokens=150,
         )
         raw = resp.choices[0].message.content.strip()
         raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
         result = json.loads(raw)
+        # Ensure boolean/string fields are always present and correct type
+        result["needs_room"]  = bool(result.get("needs_room", False))
+        result["staff_role"]  = result.get("staff_role", "watchmen") or "watchmen"
+        if result["staff_role"] == "none":
+            result["staff_role"] = None
         print(f"[ComplaintAgent] classify: is_complaint={result.get('is_complaint')} "
-              f"category={result.get('category')} confidence={result.get('confidence')}")
+              f"category={result.get('category')} staff_role={result.get('staff_role')} "
+              f"needs_room={result.get('needs_room')} confidence={result.get('confidence')}")
         return result
     except Exception as e:
         print(f"[ComplaintAgent] classify error: {e}")
@@ -104,6 +125,8 @@ Rules:
             "category":     "not_complaint",
             "title":        "",
             "confidence":   0.0,
+            "needs_room":   False,
+            "staff_role":   None,
         }
 
 
@@ -218,6 +241,8 @@ def process_complaint(
     text: str,
     user_info: dict,
     supabase,
+    hostel_id: str = None,
+    room_number: str = None,
 ) -> dict:
     """
     Full agentic complaint pipeline:
@@ -225,6 +250,7 @@ def process_complaint(
       2. Similar   (DB keyword search)
       3. Enrich    (DB hostel lookup — only if hostel category)
       4. Save      (Supabase insert)
+      5. Forward   (staff_bot — route to matching staff)
 
     Returns:
         {
@@ -247,8 +273,9 @@ def process_complaint(
             "message": "This message does not appear to be a complaint.",
         }
 
-    category = classification.get("category", "general")
-    title    = classification.get("title") or text[:60].strip()
+    category   = classification.get("category", "general")
+    title      = classification.get("title") or text[:60].strip()
+    staff_role = classification.get("staff_role")  # LLM-determined, e.g. "electrical"
 
     # ── Stage 2: Similar complaints ────────────────────────────────────────────
     similar = find_similar_complaints(text, title, category, supabase)
@@ -270,6 +297,8 @@ def process_complaint(
         "status":         "open",
         "hostel_details": hostel_details,
         "vote_count":     1,
+        "hostel_id":      hostel_id or None,
+        "room_number":    room_number or None,
     }
 
     res = supabase.table("complaints").insert(insert_data).execute()
@@ -288,6 +317,34 @@ def process_complaint(
             pass  # unique constraint may already exist — fine
 
     print(f"[ComplaintAgent] Complaint saved: '{title}' [{category}] id={complaint_id}")
+
+    # ── Stage 5: Forward to staff via staff_bot ───────────────────────────────
+    if complaint_id:
+        try:
+            from staff_bot import send_complaint_to_staff
+            # Look up hostel name if hostel_id supplied
+            hostel_name = "Unknown Hostel"
+            if hostel_id:
+                try:
+                    h_res = supabase.table("hostels").select("name").eq("id", hostel_id).single().execute()
+                    if h_res.data:
+                        hostel_name = h_res.data.get("name", hostel_name)
+                except Exception:
+                    pass
+            send_complaint_to_staff(
+                complaint_id=complaint_id,
+                title=title,
+                description=text,
+                category=category,
+                staff_role=staff_role,
+                hostel_id=hostel_id,
+                hostel_name=hostel_name,
+                room_number=room_number,
+                student_name=name,
+                supabase=supabase,
+            )
+        except Exception as fwd_err:
+            print(f"[ComplaintAgent] Staff forwarding error (non-fatal): {fwd_err}")
 
     return {
         "complaint":      complaint_row,

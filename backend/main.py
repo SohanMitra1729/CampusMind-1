@@ -31,12 +31,14 @@ from complaint_agent import (
     STATUS_LABELS,
 )
 from telegram_bot import handle_update, setup_webhook
+from staff_bot import handle_staff_update, setup_staff_webhook
 
 app = FastAPI()
 
 @app.on_event("startup")
 async def on_startup():
     await setup_webhook()
+    await setup_staff_webhook()
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,6 +84,8 @@ class ComplaintClassifyRequest(BaseModel):
 class ComplaintRequest(BaseModel):
     text: str
     user_info: Optional[Dict[str, Any]] = None
+    hostel_id: Optional[str] = None    # UUID of the hostel (required for new complaints)
+    room_number: Optional[str] = None  # Optional room identifier
 
 class ComplaintStatusRequest(BaseModel):
     status: str   # open | in_progress | resolved | dismissed
@@ -602,6 +606,8 @@ async def submit_complaint(req: ComplaintRequest):
             text=req.text,
             user_info=req.user_info,
             supabase=supabase,
+            hostel_id=req.hostel_id,
+            room_number=req.room_number,
         )
         if result.get("error") == "not_a_complaint":
             raise HTTPException(status_code=400, detail=result["message"])
@@ -734,3 +740,25 @@ async def telegram_webhook(
     background_tasks.add_task(handle_update, update, supabase)
     return {"ok": True}
 
+
+@app.get("/api/hostels")
+async def list_hostels():
+    """Return all hostels for the frontend dropdown."""
+    try:
+        res = supabase.table("hostels").select("id, name, code").order("code").execute()
+        return res.data or []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/staff/telegram/webhook")
+async def staff_telegram_webhook(
+    background_tasks: BackgroundTasks,
+    update: dict = Body(...)
+):
+    """
+    Staff bot webhook — Telegram sends updates for the staff bot here.
+    Returns 200 immediately; processing happens in background.
+    """
+    background_tasks.add_task(handle_staff_update, update, supabase)
+    return {"ok": True}
