@@ -8,7 +8,7 @@ const KNOWN_SOURCES = [
   { label: 'Handbook', value: 'handbook.pdf' },
 ];
 
-export default function Chat({ user, onLogout, onOpenAdmin }) {
+export default function Chat({ user, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -371,14 +371,6 @@ export default function Chat({ user, onLogout, onOpenAdmin }) {
         <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
           <button className="new-chat-btn" onClick={handleNewChat} style={{ flex: 1, marginBottom: 0 }}>
             + New Chat
-          </button>
-          <button
-            type="button"
-            onClick={onOpenAdmin}
-            className="admin-nav-btn"
-            title="Institutional Admin Portal"
-          >
-            🛡️ Admin
           </button>
         </div>
 
