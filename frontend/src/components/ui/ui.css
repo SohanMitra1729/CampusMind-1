@@ -1,0 +1,378 @@
+/* ── Base UI Components (Design System) ── */
+
+/* Button */
+.cm-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  font-weight: var(--font-medium);
+  transition: all var(--transition-fast);
+  cursor: pointer;
+  border: 1px solid transparent;
+  font-family: inherit;
+  outline: none;
+}
+
+.cm-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.cm-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--cm-bg), 0 0 0 4px var(--cm-accent);
+}
+
+/* Button Variants */
+.cm-btn-primary {
+  background-color: var(--cm-primary);
+  color: var(--cm-primary-fg);
+}
+.cm-btn-primary:hover {
+  opacity: 0.9;
+}
+
+.cm-btn-secondary {
+  background-color: var(--cm-secondary);
+  color: var(--cm-secondary-fg);
+}
+.cm-btn-secondary:hover {
+  background-color: var(--cm-border);
+}
+
+.cm-btn-outline {
+  background-color: transparent;
+  border-color: var(--cm-border);
+  color: var(--cm-fg);
+}
+.cm-btn-outline:hover {
+  background-color: var(--cm-secondary);
+}
+
+.cm-btn-ghost {
+  background-color: transparent;
+  color: var(--cm-fg);
+}
+.cm-btn-ghost:hover {
+  background-color: var(--cm-secondary);
+}
+
+.cm-btn-danger {
+  background-color: var(--cm-error);
+  color: #fff;
+}
+.cm-btn-danger:hover {
+  opacity: 0.9;
+}
+
+/* Button Sizes */
+.cm-btn-sm {
+  height: 2.25rem;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+}
+.cm-btn-md {
+  height: 2.5rem;
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+.cm-btn-lg {
+  height: 2.75rem;
+  padding: 0 var(--space-8);
+  font-size: var(--text-base);
+}
+.cm-btn-icon {
+  height: 2.5rem;
+  width: 2.5rem;
+  padding: 0;
+}
+
+/* Input */
+.cm-input {
+  display: flex;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--cm-border);
+  background-color: transparent;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--cm-fg);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.cm-input::placeholder {
+  color: var(--cm-muted);
+}
+
+.cm-input:focus-visible {
+  border-color: var(--cm-accent);
+  box-shadow: 0 0 0 1px var(--cm-accent);
+}
+
+.cm-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Textarea */
+.cm-textarea {
+  display: flex;
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--cm-border);
+  background-color: transparent;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--cm-fg);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  outline: none;
+  font-family: inherit;
+  min-height: 80px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.cm-textarea:focus-visible {
+  border-color: var(--cm-accent);
+  box-shadow: 0 0 0 1px var(--cm-accent);
+}
+
+/* Card */
+.cm-card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--cm-border);
+  background-color: var(--cm-bg);
+  color: var(--cm-fg);
+  box-shadow: var(--shadow-sm);
+}
+
+.cm-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-6);
+}
+
+.cm-card-title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  line-height: 1;
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+
+.cm-card-description {
+  font-size: var(--text-sm);
+  color: var(--cm-muted);
+  margin: 0;
+}
+
+.cm-card-content {
+  padding: 0 var(--space-6) var(--space-6) var(--space-6);
+}
+
+.cm-card-footer {
+  display: flex;
+  align-items: center;
+  padding: var(--space-6);
+  padding-top: 0;
+}
+
+/* Badge */
+.cm-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  transition: all var(--transition-fast);
+}
+
+.cm-badge-default {
+  background-color: var(--cm-primary);
+  color: var(--cm-primary-fg);
+}
+
+.cm-badge-secondary {
+  background-color: var(--cm-secondary);
+  color: var(--cm-secondary-fg);
+}
+
+.cm-badge-outline {
+  border-color: var(--cm-border);
+  color: var(--cm-fg);
+}
+
+/* Skeleton */
+.cm-skeleton {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  background-color: var(--cm-secondary);
+  border-radius: var(--radius-md);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Dialog Overlay & Content */
+.cm-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+}
+
+.cm-dialog-content {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 50;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  max-width: 32rem; /* 512px */
+  background-color: var(--cm-bg);
+  border: 1px solid var(--cm-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-lg);
+  animation: dialogShow var(--transition-normal);
+}
+
+@keyframes dialogShow {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* Dropdown/Menu */
+.cm-dropdown-content {
+  z-index: 50;
+  min-width: 8rem;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--cm-border);
+  background-color: var(--cm-bg);
+  color: var(--cm-fg);
+  padding: var(--space-1);
+  box-shadow: var(--shadow-md);
+  animation: fadeIn var(--transition-fast);
+}
+
+.cm-dropdown-item {
+  position: relative;
+  display: flex;
+  cursor: pointer;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  outline: none;
+  transition: background-color var(--transition-fast);
+}
+
+.cm-dropdown-item:hover, .cm-dropdown-item:focus {
+  background-color: var(--cm-secondary);
+}
+
+/* Toast */
+.cm-toast {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--cm-border);
+  background-color: var(--cm-bg);
+  color: var(--cm-fg);
+  box-shadow: var(--shadow-md);
+  animation: slideIn var(--transition-normal);
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Helper Utilities for UI Components */
+.cm-icon-sm { width: 1rem; height: 1rem; }
+.cm-icon-md { width: 1.25rem; height: 1.25rem; }
+.cm-icon-lg { width: 1.5rem; height: 1.5rem; }
+
+.cm-dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  text-align: center;
+}
+@media (min-width: 640px) {
+  .cm-dialog-header {
+    text-align: left;
+  }
+}
+.cm-dialog-title {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  margin: 0;
+}
+.cm-dialog-description {
+  font-size: var(--text-sm);
+  color: var(--cm-muted);
+  margin: 0;
+}
+.cm-dialog-close {
+  position: absolute;
+  right: var(--space-4);
+  top: var(--space-4);
+  background: transparent;
+  border: none;
+  color: var(--cm-muted);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
+}
+.cm-dialog-close:hover {
+  opacity: 1;
+}
+
+.cm-toast-msg {
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+}
+.cm-toast-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--cm-muted);
+  cursor: pointer;
+}
+.cm-toast-close:hover {
+  color: var(--cm-fg);
+}

@@ -1,18 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
-
-// Known PDF sources — extend this list to match your ingested files
-const KNOWN_SOURCES = [
-  { label: 'All Sources', value: null },
-  { label: 'Syllabus', value: 'syllabus.pdf' },
-  { label: 'Notes', value: 'notes.pdf' },
-  { label: 'Handbook', value: 'handbook.pdf' },
-];
+import React, { useState, useRef, useEffect } from 'react';
+import { Plus, MessageSquare, Trash2, Send, Loader2, User as UserIcon, Bell, LogOut, ChevronDown, CheckCircle2, AlertCircle, Sparkles, Calendar, Home, BellRing, Paperclip } from 'lucide-react';
+import { Button } from './components/ui/Button';
+import { Dropdown, DropdownItem } from './components/ui/Dropdown';
+import { Dialog, DialogHeader, DialogTitle, DialogClose } from './components/ui/Dialog';
+import { Badge } from './components/ui/Badge';
 
 export default function Chat({ user, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [selectedSource, setSelectedSource] = useState(null);
+  const [selectedSource, setSelectedSource] = useState(null); // Kept state for backend, removed UI
 
   // Complaint state
   const [complaintPending, setComplaintPending] = useState(null);
@@ -20,18 +17,16 @@ export default function Chat({ user, onLogout }) {
   const [complaintResult, setComplaintResult] = useState(null);
   const [votedComplaints, setVotedComplaints] = useState(new Set());
 
-  // Hostel + room location state (for complaint form)
+  // Hostel + room location state
   const [hostels, setHostels] = useState([]);
   const [selectedHostelId, setSelectedHostelId] = useState('');
   const [roomNumber, setRoomNumber] = useState('');
-  // isRoomSpecific is derived from complaintPending.needsRoom — set by the AI agent
 
   // My Complaints panel
   const [showMyComplaints, setShowMyComplaints] = useState(false);
   const [myComplaints, setMyComplaints] = useState([]);
   const [myComplaintsLoading, setMyComplaintsLoading] = useState(false);
 
-  
   // Chat History State
   const [chatSessions, setChatSessions] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -40,17 +35,14 @@ export default function Chat({ user, onLogout }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifFilter, setNotifFilter] = useState('all');
   const [notifications, setNotifications] = useState([]);
-  const [notifLoading, setNotifLoading] = useState(false);
   const notifPollRef = useRef(null);
 
-  // Fetch notifications from the DB
   const fetchNotifications = async () => {
     if (!user?.id) return;
     try {
       const res = await fetch(`http://127.0.0.1:8000/api/notifications?user_id=${user.id}`);
       if (res.ok) {
         const data = await res.json();
-        // Map DB shape to component shape
         setNotifications(data.map(n => ({
           id:      n.id,
           title:   n.notification_title,
@@ -65,7 +57,6 @@ export default function Chat({ user, onLogout }) {
     }
   };
 
-  // Fetch hostels for dropdown
   useEffect(() => {
     fetch('http://127.0.0.1:8000/api/hostels')
       .then(r => r.ok ? r.json() : [])
@@ -84,7 +75,6 @@ export default function Chat({ user, onLogout }) {
     return `${Math.floor(hrs / 24)}d ago`;
   };
 
-  // Initial fetch + 30s polling
   useEffect(() => {
     fetchNotifications();
     notifPollRef.current = setInterval(fetchNotifications, 30000);
@@ -92,7 +82,6 @@ export default function Chat({ user, onLogout }) {
   }, [user?.id]);
 
   const notifRef = useRef(null);
-
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (notifRef.current && !notifRef.current.contains(event.target)) {
@@ -102,18 +91,13 @@ export default function Chat({ user, onLogout }) {
     if (showNotifications) {
       document.addEventListener('mousedown', handleClickOutside);
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showNotifications]);
 
   const unreadCount = notifications.filter(n => n.unread).length;
-  const filteredNotifs = notifFilter === 'all' 
-    ? notifications 
-    : notifications.filter(n => n.unread);
+  const filteredNotifs = notifFilter === 'all' ? notifications : notifications.filter(n => n.unread);
 
   const markAllRead = async () => {
-    // Optimistic UI update
     setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
     try {
       await fetch(`http://127.0.0.1:8000/api/notifications/read-all?user_id=${user.id}`, { method: 'PATCH' });
@@ -125,33 +109,26 @@ export default function Chat({ user, onLogout }) {
   const toggleRead = async (id) => {
     const notif = notifications.find(n => n.id === id);
     if (!notif) return;
-    // Optimistic update
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, unread: !n.unread } : n));
-    // Only call API to mark as read (we don't support un-read via API)
     if (notif.unread) {
       try {
         await fetch(`http://127.0.0.1:8000/api/notifications/${id}/read`, { method: 'PATCH' });
-      } catch (e) {
-        console.error('Failed to mark notification read', e);
-      }
+      } catch (e) {}
     }
   };
 
   const deleteNotif = (e, id) => {
     e.stopPropagation();
-    // Only remove from local state (no delete API needed — just hide it)
     setNotifications(prev => prev.filter(n => n.id !== id));
   };
 
   const messagesEndRef = useRef(null);
-
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
-
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, complaintPending, complaintResult]);
 
   useEffect(() => {
     fetchChats();
@@ -206,7 +183,7 @@ export default function Chat({ user, onLogout }) {
 
   const handleDeleteChat = async (e, chatId) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this chat conversation?")) return;
+    if (!window.confirm("Are you sure you want to delete this conversation?")) return;
 
     try {
       const res = await fetch(`http://127.0.0.1:8000/api/chats/${chatId}`, { method: 'DELETE' });
@@ -225,21 +202,20 @@ export default function Chat({ user, onLogout }) {
     e.preventDefault();
     if (!input.trim()) return;
 
-    const inputText = input; // capture before clearing
+    const inputText = input; 
     const userMessage = { role: 'user', content: inputText };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
-    // Clear previous complaint banner on new message
+    
     setComplaintPending(null);
     setComplaintResult(null);
     setSelectedHostelId('');
     setRoomNumber('');
 
     const metadata_filter = selectedSource ? { source: selectedSource } : null;
+    setSelectedSource(null); // Reset after submitting
 
-    // ── Fire-and-forget complaint classify (PARALLEL — does NOT block chat) ──
-    // Never awaited. The chat answer renders at full speed regardless.
     if (user?.id) {
       fetch('http://127.0.0.1:8000/api/complaint/classify', {
         method: 'POST',
@@ -253,11 +229,11 @@ export default function Chat({ user, onLogout }) {
               text:      inputText,
               category:  data.category  || 'general',
               title:     data.title     || inputText.slice(0, 60),
-              needsRoom: data.needs_room === true,  // set by AI agent
+              needsRoom: data.needs_room === true,
             });
           }
         })
-        .catch(() => {}); // silently ignore classify errors
+        .catch(() => {});
     }
 
     try {
@@ -279,7 +255,6 @@ export default function Chat({ user, onLogout }) {
       if (!response.ok) throw new Error('Network response was not ok');
 
       const data = await response.json();
-
       const botMessage = {
         role: 'bot',
         content: data.answer,
@@ -305,7 +280,6 @@ export default function Chat({ user, onLogout }) {
     }
   };
 
-  // ── Submit complaint when user clicks the banner ──────────────────────────
   const handleSubmitComplaint = async () => {
     if (!complaintPending || complaintSubmitting) return;
     if (!selectedHostelId) {
@@ -313,7 +287,7 @@ export default function Chat({ user, onLogout }) {
       return;
     }
     if (complaintPending.needsRoom && !roomNumber.trim()) {
-      alert('Please enter your room number — this complaint appears to be room-specific.');
+      alert('Please enter your room number.');
       return;
     }
     setComplaintSubmitting(true);
@@ -341,7 +315,6 @@ export default function Chat({ user, onLogout }) {
     }
   };
 
-  // ── Vote on a similar complaint ───────────────────────────────────────────
   const handleVote = async (complaintId) => {
     if (votedComplaints.has(complaintId)) return;
     try {
@@ -364,302 +337,209 @@ export default function Chat({ user, onLogout }) {
     }
   };
 
-
   return (
-    <>
-      <div className="sidebar">
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-          <button className="new-chat-btn" onClick={handleNewChat} style={{ flex: 1, marginBottom: 0 }}>
-            + New Chat
-          </button>
-        </div>
-
-        {/* My Complaints toggle button */}
-        <button
-          type="button"
-          className={`my-complaints-btn ${showMyComplaints ? 'active' : ''}`}
-          onClick={() => {
-            setShowMyComplaints(v => !v);
-            if (!showMyComplaints) fetchMyComplaints();
-          }}
-        >
-          <span>🚨 My Complaints</span>
-          {myComplaints.filter(c => c.status === 'open' || c.status === 'in_progress').length > 0 && (
-            <span className="my-complaints-count">
-              {myComplaints.filter(c => c.status === 'open' || c.status === 'in_progress').length}
-            </span>
+    <div className="app-chat-layout">
+      {/* ── My Complaints Modal ── */}
+      <Dialog open={showMyComplaints} onOpenChange={setShowMyComplaints}>
+        <DialogHeader style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+          <DialogTitle>My Complaints</DialogTitle>
+          <DialogClose onClick={() => setShowMyComplaints(false)} />
+        </DialogHeader>
+        <div style={{padding: 'var(--space-4)', maxHeight: '60vh', overflowY: 'auto'}}>
+          {myComplaintsLoading ? (
+            <div style={{textAlign: 'center', padding: 'var(--space-4)', color: 'var(--cm-muted)'}}>Loading complaints...</div>
+          ) : myComplaints.length === 0 ? (
+            <div style={{textAlign: 'center', padding: 'var(--space-4)', color: 'var(--cm-muted)'}}>You have not submitted any complaints yet.</div>
+          ) : (
+            <div style={{display: 'flex', flexDirection: 'column', gap: 'var(--space-3)'}}>
+              {myComplaints.map(c => (
+                <div key={c.id} style={{backgroundColor: 'var(--cm-secondary)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--cm-border)'}}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-2)'}}>
+                    <span style={{fontWeight: 'var(--font-semibold)', fontSize: 'var(--text-sm)'}}>{c.title}</span>
+                    <Badge variant={c.status === 'open' ? 'destructive' : c.status === 'in_progress' ? 'warning' : c.status === 'resolved' ? 'success' : 'secondary'}>
+                      {c.status === 'open' ? 'Open' : c.status === 'in_progress' ? 'In Progress' : c.status === 'resolved' ? 'Resolved' : 'Dismissed'}
+                    </Badge>
+                  </div>
+                  <div style={{fontSize: 'var(--text-xs)', color: 'var(--cm-muted)', marginBottom: 'var(--space-2)'}}>
+                    <span style={{textTransform: 'capitalize'}}>{c.category}</span> • {new Date(c.created_at).toLocaleDateString()}
+                  </div>
+                  <div style={{fontSize: 'var(--text-sm)'}}>{c.description}</div>
+                </div>
+              ))}
+            </div>
           )}
+        </div>
+      </Dialog>
+      {/* ── Sidebar ── */}
+      <div className="chat-sidebar">
+        <button className="new-chat-btn" onClick={handleNewChat}>
+          <Plus className="cm-icon-sm" style={{marginRight: '8px'}} /> New Chat
         </button>
 
-        {/* My Complaints panel */}
-        {showMyComplaints && (
-          <div className="my-complaints-panel">
-            {myComplaintsLoading ? (
-              <div className="my-complaints-loading">Loading…</div>
-            ) : myComplaints.length === 0 ? (
-              <div className="my-complaints-empty">No complaints submitted yet.</div>
-            ) : (
-              myComplaints.map(c => (
-                <div key={c.id} className={`my-complaint-item status-${c.status}`}>
-                  <div className="my-complaint-header">
-                    <span className="my-complaint-cat-icon">{c.category_icon}</span>
-                    <span className="my-complaint-title">{c.title}</span>
-                  </div>
-                  <div className="my-complaint-meta">
-                    <span className="my-complaint-status-badge" data-status={c.status}>
-                      {c.status_icon} {c.status_label}
-                    </span>
-                    <span className="my-complaint-votes">👥 {c.vote_count}</span>
-                    <span className="my-complaint-date">
-                      {(() => {
-                        const diff = Date.now() - new Date(c.created_at).getTime();
-                        const mins = Math.floor(diff / 60000);
-                        if (mins < 1) return 'Just now';
-                        if (mins < 60) return `${mins}m ago`;
-                        const hrs = Math.floor(mins / 60);
-                        if (hrs < 24) return `${hrs}h ago`;
-                        return `${Math.floor(hrs / 24)}d ago`;
-                      })()}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
+        <div className="chat-history-container">
+          <div style={{fontSize: 'var(--text-xs)', fontWeight: 'var(--font-semibold)', color: 'var(--cm-muted)', padding: 'var(--space-2) var(--space-3)', textTransform: 'uppercase'}}>
+            Recent
           </div>
-        )}
-        <div className="chat-history-list">
           {chatSessions.map((chat) => (
             <div 
               key={chat.id} 
-              className={`history-item ${activeChatId === chat.id ? 'active' : ''}`}
+              className={`chat-history-item ${activeChatId === chat.id ? 'active' : ''}`}
               onClick={() => loadChat(chat.id)}
-              title={chat.title}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
             >
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {chat.title}
-              </span>
+              <div style={{display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flex: 1, overflow: 'hidden'}}>
+                <MessageSquare className="cm-icon-sm" style={{flexShrink: 0}} />
+                <span className="chat-history-text">{chat.title}</span>
+              </div>
               <button
                 type="button"
-                className="delete-chat-btn"
+                className="chat-delete-btn"
                 onClick={(e) => handleDeleteChat(e, chat.id)}
-                title="Delete Chat"
               >
-                🗑️
+                <Trash2 className="cm-icon-sm" />
               </button>
             </div>
           ))}
         </div>
-        <div className="user-profile-header" style={{ marginTop: 'auto', borderBottom: 'none', paddingTop: '1rem', borderTop: '1px solid var(--surface-border)', position: 'relative' }} ref={notifRef}>
-          <div className="user-info">
-            <div className="user-avatar">
-              {user?.name ? user.name.charAt(0) : '?'}
-            </div>
-            <div className="user-details" style={{ overflow: 'hidden' }}>
-              <span className="user-name" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.name || 'User'}</span>
-            </div>
-          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+        <div className="sidebar-bottom-container">
+          <div className="sidebar-profile-row">
+            <div className="user-profile-header">
+              <div style={{display: 'flex', alignItems: 'center', gap: 'var(--space-2)'}}>
+                <div className="user-avatar-circle">
+                  {user?.name ? user.name.charAt(0) : '?'}
+                </div>
+                <div style={{fontSize: 'var(--text-sm)', fontWeight: 'var(--font-medium)', whiteSpace: 'nowrap'}}>{user?.name || 'User'}</div>
+              </div>
+              <ChevronDown className="cm-icon-sm text-[var(--cm-muted)]" />
+            </div>
+
+          <div style={{position: 'relative'}} ref={notifRef}>
             <button 
-              type="button"
-              className={`notif-bell-btn ${showNotifications ? 'active' : ''}`}
+              className="chat-delete-btn" 
+              style={{padding: 'var(--space-2)', position: 'relative', opacity: 1}}
               onClick={() => setShowNotifications(!showNotifications)}
-              title="Notifications"
-              aria-label="Notification Center"
             >
-              <svg className="bell-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-              </svg>
+              <Bell className="cm-icon-md text-[var(--cm-fg)]" />
               {unreadCount > 0 && (
-                <span className="notif-badge">
-                  <span className="notif-badge-ping"></span>
-                  <span className="notif-badge-dot">{unreadCount}</span>
-                </span>
+                <span style={{position: 'absolute', top: 0, right: 0, width: '10px', height: '10px', backgroundColor: 'var(--cm-error)', borderRadius: 'var(--radius-full)', border: '2px solid var(--cm-bg)'}}></span>
               )}
             </button>
-
-            <button onClick={onLogout} className="logout-btn" style={{ padding: '0.5rem' }}>
-              Out
-            </button>
-          </div>
-
-          {showNotifications && (
-            <div className="notif-popover">
-              <div className="notif-popover-header">
-                <div className="notif-header-top">
-                  <div className="notif-header-title">
-                    <span>Notifications</span>
-                    {unreadCount > 0 && <span className="notif-count-pill">{unreadCount} new</span>}
-                  </div>
+            
+            {showNotifications && (
+              <div className="cm-dropdown-content" style={{position: 'absolute', bottom: 'calc(100% + 10px)', left: '-20px', width: '300px', padding: 0, backgroundColor: 'var(--cm-bg)', border: '1px solid var(--cm-border)', borderRadius: 'var(--radius-lg)'}}>
+                <div style={{padding: 'var(--space-3)', borderBottom: '1px solid var(--cm-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                  <span style={{fontWeight: 'var(--font-semibold)'}}>Notifications</span>
                   {unreadCount > 0 && (
-                    <button type="button" className="notif-mark-read-btn" onClick={markAllRead}>
-                      Mark all read
-                    </button>
+                    <button onClick={markAllRead} style={{background: 'transparent', border: 'none', color: 'var(--cm-accent)', fontSize: 'var(--text-xs)', cursor: 'pointer'}}>Mark all read</button>
                   )}
                 </div>
-                <div className="notif-tabs">
-                  <button 
-                    type="button" 
-                    className={`notif-tab ${notifFilter === 'all' ? 'active' : ''}`}
-                    onClick={() => setNotifFilter('all')}
-                  >
-                    All ({notifications.length})
-                  </button>
-                  <button 
-                    type="button" 
-                    className={`notif-tab ${notifFilter === 'unread' ? 'active' : ''}`}
-                    onClick={() => setNotifFilter('unread')}
-                  >
-                    Unread ({unreadCount})
-                  </button>
+                <div style={{maxHeight: '300px', overflowY: 'auto'}}>
+                  {filteredNotifs.length === 0 ? (
+                    <div style={{padding: 'var(--space-4)', textAlign: 'center', color: 'var(--cm-muted)', fontSize: 'var(--text-sm)'}}>No new notifications</div>
+                  ) : (
+                    filteredNotifs.map(n => (
+                      <div key={n.id} style={{padding: 'var(--space-3)', borderBottom: '1px solid var(--cm-border)', cursor: 'pointer', backgroundColor: n.unread ? 'var(--cm-secondary)' : 'transparent'}} onClick={() => toggleRead(n.id)}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--space-1)'}}>
+                          <span style={{fontWeight: 'var(--font-medium)', fontSize: 'var(--text-sm)'}}>{n.title}</span>
+                          <span style={{fontSize: 'var(--text-xs)', color: 'var(--cm-muted)'}}>{n.time}</span>
+                        </div>
+                        <div style={{fontSize: 'var(--text-xs)', color: 'var(--cm-muted)'}}>{n.message}</div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
+            )}
+          </div>
+        </div>
 
-              <div className="notif-list">
-                {filteredNotifs.length === 0 ? (
-                  <div className="notif-empty">
-                    <span style={{ fontSize: '1.5rem' }}>🔕</span>
-                    <span>No notifications</span>
-                    <button 
-                      type="button" 
-                      onClick={(e) => { e.stopPropagation(); setNotifications(DEFAULT_NOTIFICATIONS); }}
-                      style={{ marginTop: '0.6rem', background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.4)', color: '#60a5fa', padding: '0.35rem 0.75rem', borderRadius: '6px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600, transition: 'all 0.15s' }}
-                    >
-                      🔄 Restore sample alerts
-                    </button>
-                  </div>
-                ) : (
-                  filteredNotifs.map(n => (
-                    <div 
-                      key={n.id} 
-                      className={`notif-item ${n.unread ? 'unread' : ''}`}
-                      onClick={() => toggleRead(n.id)}
-                    >
-                      <div className="notif-item-icon">{n.icon}</div>
-                      <div className="notif-item-body">
-                        <div className="notif-item-title-row">
-                          <span className="notif-item-title">{n.title}</span>
-                          <span className="notif-item-time">{n.time}</span>
-                        </div>
-                        <div className="notif-item-msg">{n.message}</div>
-                      </div>
-                      {n.unread && <div className="notif-unread-dot"></div>}
-                      <button 
-                        type="button" 
-                        className="notif-dismiss-btn" 
-                        onClick={(e) => deleteNotif(e, n.id)}
-                        title="Dismiss"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="notif-popover-footer">
-                <a className="notif-footer-link" onClick={() => { setShowNotifications(false); setInput('Show academic calendar and important notices'); }}>
-                  ✨ Ask AI for Campus Updates
-                </a>
-              </div>
-            </div>
-          )}
+        <div className="sidebar-static-menu">
+            <button className="sidebar-menu-item" onClick={() => { setShowMyComplaints(true); fetchMyComplaints(); }}>
+              <div style={{display: 'flex', alignItems: 'center'}}><AlertCircle className="cm-icon-sm mr-2" /> My Complaints</div>
+              <ChevronDown className="cm-icon-sm text-[var(--cm-muted)]" style={{transform: 'rotate(-90deg)'}} />
+            </button>
+            <button className="sidebar-menu-item" style={{color: 'var(--cm-error)'}} onClick={onLogout}>
+              <div style={{display: 'flex', alignItems: 'center'}}><LogOut className="cm-icon-sm mr-2" /> Log out</div>
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="main-chat-area">
-        <div className="chat-container">
-          <header className="chat-header">
-            <h1>CampusMind Assistant</h1>
-          </header>
-
-          <div className="filter-bar" role="group" aria-label="Filter by source document">
-            <span className="filter-label">Filter:</span>
-            {KNOWN_SOURCES.map((src) => (
-              <button
-                key={src.label}
-                type="button"
-                className={`filter-chip ${selectedSource === src.value ? 'active' : ''}`}
-                onClick={() => setSelectedSource(src.value)}
-                aria-pressed={selectedSource === src.value}
-              >
-                {src.label}
-              </button>
-            ))}
+      {/* ── Main Chat Area ── */}
+      <div className="chat-main">
+        <div className="chat-header-bar">
+          <div>
+            <div className="chat-header-title">CampusMind</div>
+            <div className="chat-header-subtitle">AI Campus Assistant — Academics, notices, and hostel services</div>
           </div>
+        </div>
 
-          <div className="chat-messages">
+        <div className="chat-messages-scroll">
+          <div className="chat-messages-inner">
             {messages.length === 0 && !isLoading && (
-              <div style={{ textAlign: 'center', marginTop: 'auto', marginBottom: 'auto', color: 'var(--surface-border)' }}>
-                <h2>How can I help you today?</h2>
+              <div className="chat-empty-state">
+                <div className="chat-empty-logo">
+                  <span style={{fontSize: '28px', fontWeight: '800', letterSpacing: '-0.05em', color: '#60a5fa'}}>CM</span>
+                  <Sparkles size={14} style={{position: 'absolute', top: 12, right: 12, color: '#93c5fd'}}/>
+                </div>
+                <div className="chat-empty-title">How can I help you today?</div>
+                <div className="chat-empty-desc">
+                  Ask me about your syllabus, important campus notices, hostel issues, or anything related to <span style={{color: '#60a5fa'}}>NIT Silchar</span>.
+                </div>
               </div>
             )}
+
             {messages.map((msg, idx) => (
-              <div key={idx} className={`message-wrapper ${msg.role}`}>
-                <div className={`message ${msg.role}`}>
+              <div key={idx} className={`chat-bubble-row ${msg.role}`}>
+                <div className={`chat-bubble ${msg.role}`}>
                   <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>
+                  
                   {msg.metadata && msg.metadata.length > 0 && (
-                    <div className="sources">
-                      <strong>Sources:</strong>
-                      <ul>
-                        {msg.metadata.map((meta, i) => {
-                          const fileName = meta.source
-                            ? meta.source.split(/[\\/]/).pop()
-                            : 'Unknown';
-                          const page = meta.page != null ? ` · p.${meta.page + 1}` : '';
-                          return (
-                            <li key={i}>
-                              <span className="source-chip">
-                                📄 {fileName}{page}
-                              </span>
-                              <span className="source-snippet">
-                                {msg.context?.[i]?.substring(0, 100)}…
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                    <div className="chat-sources">
+                      <div style={{fontSize: 'var(--text-xs)', fontWeight: 'var(--font-semibold)', color: 'var(--cm-muted)', textTransform: 'uppercase'}}>Sources</div>
+                      {msg.metadata.map((meta, i) => {
+                        const fileName = meta.source ? meta.source.split(/[\\/]/).pop() : 'Unknown';
+                        const page = meta.page != null ? ` (p.${meta.page + 1})` : '';
+                        return (
+                          <div key={i} className="chat-source-item">
+                            <span className="chat-source-badge">{fileName}{page}</span>
+                            <span style={{flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{msg.context?.[i]?.substring(0, 100)}…</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
               </div>
             ))}
+            
             {isLoading && (
-              <div className="message-wrapper bot">
-                <div className="message bot loading">Thinking...</div>
+              <div className="chat-bubble-row bot">
+                <div className="chat-bubble bot" style={{display: 'flex', alignItems: 'center', gap: 'var(--space-2)', color: 'var(--cm-muted)'}}>
+                  <Loader2 className="animate-spin cm-icon-sm" /> Thinking...
+                </div>
               </div>
             )}
 
-            {/* ── Complaint Banner: shown when classify detects a complaint ── */}
+            {/* ── Complaint Banner ── */}
             {complaintPending && !complaintResult && (
-              <div className="complaint-banner">
-                <div className="complaint-banner-header">
-                  <span className="complaint-banner-icon">🚨</span>
-                  <div style={{ flex: 1 }}>
-                    <div className="complaint-banner-title">Looks like a complaint</div>
-                    <div className="complaint-banner-sub">
-                      <span className="complaint-category-pill">{complaintPending.category}</span>
-                      {complaintPending.title && (
-                        <span style={{ opacity: 0.7, fontSize: '0.82rem' }}>"{complaintPending.title}"</span>
-                      )}
+              <div className="chat-complaint-banner">
+                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 'var(--space-4)'}}>
+                  <div style={{display: 'flex', gap: 'var(--space-3)'}}>
+                    <AlertCircle className="cm-icon-lg text-amber-500" />
+                    <div>
+                      <div style={{fontWeight: 'var(--font-semibold)', color: 'var(--cm-fg)'}}>File a formal complaint?</div>
+                      <div style={{fontSize: 'var(--text-sm)', color: 'var(--cm-muted)'}}>We detected an issue regarding: <strong style={{color: 'var(--cm-fg)'}}>{complaintPending.category}</strong></div>
                     </div>
                   </div>
-                  <button type="button" className="complaint-dismiss-btn" onClick={() => setComplaintPending(null)}>×</button>
+                  <button onClick={() => setComplaintPending(null)} style={{background: 'transparent', border: 'none', color: 'var(--cm-muted)', cursor: 'pointer'}}>✕</button>
                 </div>
-                <p className="complaint-banner-msg">
-                  Would you like to formally submit this as a complaint? Admin will review and respond.
-                </p>
 
-                {/* ── Hostel + Room (auto-decided by AI) ── */}
-                <div className="complaint-location-fields">
-                  {/* Hostel — always required */}
-                  <div className="complaint-location-row">
-                    <label className="complaint-location-label" htmlFor="hostel-select">🏠 Hostel <span style={{color:'#f87171'}}>*</span></label>
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: 'var(--space-4)', marginBottom: 'var(--space-4)'}}>
+                  <div style={{flex: '1 1 200px'}}>
+                    <label style={{display: 'block', fontSize: 'var(--text-xs)', fontWeight: 'var(--font-medium)', marginBottom: 'var(--space-1)', color: 'var(--cm-muted)'}}>Hostel</label>
                     <select
-                      id="hostel-select"
-                      className="complaint-hostel-select"
+                      style={{width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', background: 'var(--cm-bg)', color: 'var(--cm-fg)', border: '1px solid var(--cm-border)', outline: 'none'}}
                       value={selectedHostelId}
                       onChange={e => setSelectedHostelId(e.target.value)}
                     >
@@ -669,125 +549,108 @@ export default function Chat({ user, onLogout }) {
                       ))}
                     </select>
                   </div>
-
-                  {/* Room number — only shown when AI decides it is room-specific */}
+                  
                   {complaintPending.needsRoom && (
-                    <div className="complaint-location-row">
-                      <label className="complaint-location-label" htmlFor="room-input">
-                        🚪 Room Number <span style={{color:'#f87171'}}>*</span>
-                      </label>
+                    <div style={{flex: '1 1 200px'}}>
+                      <label style={{display: 'block', fontSize: 'var(--text-xs)', fontWeight: 'var(--font-medium)', marginBottom: 'var(--space-1)', color: 'var(--cm-muted)'}}>Room Number</label>
                       <input
-                        id="room-input"
+                        style={{width: '100%', padding: 'var(--space-2)', borderRadius: 'var(--radius-md)', background: 'var(--cm-bg)', color: 'var(--cm-fg)', border: '1px solid var(--cm-border)', outline: 'none'}}
                         type="text"
-                        className="complaint-room-input"
                         placeholder="e.g. 204"
                         value={roomNumber}
                         onChange={e => setRoomNumber(e.target.value)}
                         maxLength={10}
-                        autoFocus
                       />
-                      <span className="room-auto-hint">🤖 AI detected a room-specific issue</span>
                     </div>
                   )}
                 </div>
 
-                <div className="complaint-banner-actions">
-                  <button
-                    type="button"
-                    className="complaint-submit-btn"
-                    onClick={handleSubmitComplaint}
-                    disabled={complaintSubmitting || !selectedHostelId || (complaintPending.needsRoom && !roomNumber.trim())}
-                  >
-                    {complaintSubmitting ? '⏳ Submitting…' : '📝 Submit Complaint'}
-                  </button>
-                  <button type="button" className="complaint-cancel-btn" onClick={() => setComplaintPending(null)}>
-                    Not a complaint
-                  </button>
+                <div style={{display: 'flex', gap: 'var(--space-3)'}}>
+                  <Button onClick={handleSubmitComplaint} disabled={complaintSubmitting || !selectedHostelId || (complaintPending.needsRoom && !roomNumber.trim())} isLoading={complaintSubmitting}>
+                    Submit Complaint
+                  </Button>
+                  <Button variant="ghost" onClick={() => setComplaintPending(null)}>
+                    Cancel
+                  </Button>
                 </div>
               </div>
             )}
 
-            {/* ── Complaint Success Card ─────────────────────────────────── */}
             {complaintResult && !complaintResult.error && (
-              <div className="complaint-success-card">
-                <div className="complaint-success-header">
-                  <span style={{ fontSize: '1.3rem' }}>✅</span>
-                  <div style={{ flex: 1 }}>
-                    <div className="complaint-success-title">Complaint Submitted</div>
-                    <div className="complaint-success-sub">{complaintResult.title}</div>
+              <div className="chat-complaint-banner" style={{background: 'rgba(16, 185, 129, 0.1)', borderColor: 'rgba(16, 185, 129, 0.2)'}}>
+                <div style={{display: 'flex', gap: 'var(--space-3)', alignItems: 'center'}}>
+                  <CheckCircle2 className="cm-icon-lg text-emerald-500" />
+                  <div>
+                    <div style={{fontWeight: 'var(--font-semibold)', color: 'var(--cm-fg)'}}>Complaint Submitted successfully!</div>
+                    <div style={{fontSize: 'var(--text-sm)', color: 'var(--cm-muted)'}}>{complaintResult.title}</div>
                   </div>
-                  <button type="button" className="complaint-dismiss-btn" onClick={() => setComplaintResult(null)}>×</button>
                 </div>
-
-                {/* Similar complaints with vote buttons */}
-                {complaintResult.similar && complaintResult.similar.length > 0 && (
-                  <div className="complaint-similar-section">
-                    <div className="complaint-similar-title">👥 Similar open complaints — add your vote:</div>
-                    {complaintResult.similar.slice(0, 3).map(s => (
-                      <div key={s.id} className="complaint-similar-item">
-                        <div className="complaint-similar-text">
-                          <span className="complaint-similar-label">{s.title}</span>
-                          <span className="complaint-vote-count">👥 {s.vote_count}</span>
-                        </div>
-                        <button
-                          type="button"
-                          className={`complaint-vote-btn ${votedComplaints.has(s.id) ? 'voted' : ''}`}
-                          onClick={() => handleVote(s.id)}
-                          disabled={votedComplaints.has(s.id)}
-                        >
-                          {votedComplaints.has(s.id) ? '✓ Voted' : '+1 Same issue'}
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Hostel details if enriched */}
-                {complaintResult.hostel_details && Object.keys(complaintResult.hostel_details).length > 1 && (
-                  <div className="complaint-hostel-details">
-                    <div className="complaint-hostel-title">🏠 Your hostel details (auto-fetched):</div>
-                    <div className="complaint-hostel-grid">
-                      {Object.entries(complaintResult.hostel_details)
-                        .filter(([k]) => !['raw_chunk', 'source_doc'].includes(k))
-                        .slice(0, 6)
-                        .map(([k, v]) => (
-                          <div key={k} className="complaint-hostel-item">
-                            <span className="complaint-hostel-key">{k.replace(/_/g, ' ')}</span>
-                            <span className="complaint-hostel-val">{v}</span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
             {complaintResult?.error && (
-              <div className="complaint-error-toast">⚠️ {complaintResult.error}</div>
+              <div className="chat-complaint-banner" style={{background: 'rgba(239, 68, 68, 0.1)', borderColor: 'rgba(239, 68, 68, 0.2)'}}>
+                <div style={{fontWeight: 'var(--font-semibold)', color: 'var(--cm-error)'}}>Submission Failed</div>
+                <div style={{fontSize: 'var(--text-sm)', color: 'var(--cm-muted)'}}>{complaintResult.error}</div>
+              </div>
             )}
 
             <div ref={messagesEndRef} />
           </div>
+        </div>
 
-
-          <form className="chat-input-form" onSubmit={handleSubmit}>
-            <input
-              type="text"
+        <div className="chat-input-container">
+          {messages.length === 0 && !isLoading && (
+            <div className="quick-actions-grid">
+              <button className="qa-card" type="button" onClick={() => { setInput('Show me the academic calendar'); setSelectedSource('academic'); }}>
+                <Calendar className="qa-icon" />
+                <div className="qa-text">Academic Calendar</div>
+              </button>
+              <button className="qa-card" type="button" onClick={() => { setInput('I want to report an issue with my hostel'); setSelectedSource('hostel'); }}>
+                <Home className="qa-icon" />
+                <div className="qa-text">Hostel Information</div>
+              </button>
+              <button className="qa-card" type="button" onClick={() => { setInput('Are there any new notices?'); setSelectedSource('notices'); }}>
+                <BellRing className="qa-icon" />
+                <div className="qa-text">Notices &<br/>Announcements</div>
+              </button>
+              <button className="qa-card" type="button" onClick={() => { setInput('I want to report an issue'); setSelectedSource('hostel'); }}>
+                <AlertCircle className="qa-icon" />
+                <div className="qa-text">Report an<br/>Issue</div>
+              </button>
+            </div>
+          )}
+          <form className="chat-input-wrapper" onSubmit={handleSubmit}>
+            <textarea
+              className="chat-input-field"
+              placeholder="Ask CampusMind anything..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                selectedSource
-                  ? `Ask about ${selectedSource}…`
-                  : 'Ask me anything…'
-              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
+              rows={1}
               disabled={isLoading}
             />
-            <button type="submit" disabled={isLoading || !input.trim()}>
-              Send
-            </button>
+            <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+              <button type="button" className="chat-attach-btn"><Paperclip size={20} /></button>
+              <button
+                type="submit"
+                className="chat-send-btn"
+                disabled={isLoading || !input.trim()}
+              >
+                <Send size={18} />
+              </button>
+            </div>
           </form>
+          <div style={{textAlign: 'center', marginTop: '16px', fontSize: '0.7rem', color: '#94a3b8', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px'}}>
+            <CheckCircle2 size={12} /> CampusMind can make mistakes. Consider verifying important information.
+          </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }

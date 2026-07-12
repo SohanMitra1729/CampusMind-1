@@ -1,4 +1,8 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
+import { Shield, User, Lock, Eye, EyeOff, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Button } from './components/ui/Button';
+import { Input } from './components/ui/Input';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/Card';
 
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
@@ -29,88 +33,93 @@ export default function AdminLogin({ onAdminSuccess }) {
   };
 
   return (
-    <div className="admin-login-overlay">
-      <div className="admin-login-card">
-        {/* Shield icon header */}
-        <div className="admin-login-icon-wrap">
-          <div className="admin-login-shield">🛡️</div>
-        </div>
-
-        <div className="admin-login-header">
-          <h2>Admin Portal</h2>
-          <p className="admin-login-subtitle">Restricted access — authorised personnel only</p>
-        </div>
-
-        {error && (
-          <div className="admin-login-alert">
-            <span>⚠️</span> {error}
+    <div className="auth-wrapper">
+      <Card className="auth-card-container">
+        <CardHeader className="auth-header-text">
+          <div className="auth-logo" style={{ backgroundColor: 'var(--cm-secondary)' }}>
+            <Shield className="cm-icon-lg text-[var(--cm-fg)]" />
           </div>
-        )}
+          <CardTitle>Admin Portal</CardTitle>
+          <CardDescription>Restricted access — authorized personnel only</CardDescription>
+        </CardHeader>
 
-        <form onSubmit={handleSubmit} className="admin-login-form">
-          <div className="admin-form-group">
-            <label htmlFor="admin-username">Username</label>
-            <input
-              id="admin-username"
-              type="text"
-              placeholder="Enter admin username"
-              value={username}
-              onChange={(e) => { setUsername(e.target.value); setError(''); }}
-              autoComplete="off"
-              required
-            />
-          </div>
-
-          <div className="admin-form-group">
-            <label htmlFor="admin-password">Password</label>
-            <div className="admin-password-wrap">
-              <input
-                id="admin-password"
-                type={showPassword ? 'text' : 'password'}
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                required
-              />
-              <button
-                type="button"
-                className="admin-toggle-pw"
-                onClick={() => setShowPassword(v => !v)}
-                tabIndex={-1}
-              >
-                {showPassword ? '🙈' : '👁️'}
-              </button>
+        <CardContent>
+          {error && (
+            <div className="auth-alert-box auth-alert-error">
+              <AlertCircle className="cm-icon-md" style={{flexShrink: 0}} />
+              <span>{error}</span>
             </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="auth-form-body">
+            <div className="auth-input-group">
+              <label className="auth-label" htmlFor="admin-username">Username</label>
+              <div className="auth-input-wrapper">
+                <User className="cm-icon-sm auth-input-icon-left" />
+                <Input
+                  id="admin-username"
+                  className="auth-input-with-icon-left"
+                  type="text"
+                  placeholder="Enter admin username"
+                  value={username}
+                  onChange={(e) => { setUsername(e.target.value); setError(''); }}
+                  autoComplete="off"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="auth-input-group">
+              <label className="auth-label" htmlFor="admin-password">Password</label>
+              <div className="auth-input-wrapper">
+                <Lock className="cm-icon-sm auth-input-icon-left" />
+                <Input
+                  id="admin-password"
+                  className="auth-input-with-icon-left auth-input-with-icon-right"
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-input-icon-right"
+                  onClick={() => setShowPassword(v => !v)}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="cm-icon-sm" /> : <Eye className="cm-icon-sm" />}
+                </button>
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              style={{width: '100%', marginTop: 'var(--space-2)'}}
+              disabled={isLoading || !username.trim() || !password}
+              isLoading={isLoading}
+            >
+              Access Admin Panel
+            </Button>
+          </form>
+        </CardContent>
+
+        <CardFooter>
+          <div className="auth-footer-text" style={{width: '100%', display: 'flex', justifyContent: 'center'}}>
+            <button
+              type="button"
+              className="auth-link"
+              style={{display: 'flex', alignItems: 'center', gap: 'var(--space-2)'}}
+              onClick={() => {
+                window.history.replaceState(null, null, window.location.pathname);
+                window.location.reload();
+              }}
+            >
+              <ArrowLeft className="cm-icon-sm" /> Back to CampusMind
+            </button>
           </div>
-
-          <button
-            type="submit"
-            className="admin-login-submit-btn"
-            disabled={isLoading || !username.trim() || !password}
-          >
-            {isLoading ? (
-              <span className="admin-btn-loading">
-                <span className="admin-spinner" /> Verifying…
-              </span>
-            ) : (
-              'Access Admin Panel'
-            )}
-          </button>
-        </form>
-
-        <div className="admin-login-back">
-          <button
-            type="button"
-            className="admin-back-link"
-            onClick={() => {
-              window.history.replaceState(null, null, window.location.pathname);
-              window.location.reload();
-            }}
-          >
-            ← Back to CampusMind
-          </button>
-        </div>
-      </div>
+        </CardFooter>
+      </Card>
     </div>
   );
 }

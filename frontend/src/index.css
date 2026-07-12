@@ -1,22 +1,110 @@
+@import './components/ui/ui.css';
+@import './auth.css';
+@import './chat.css';
+@import './admin.css';
+
 :root {
-  --bg-color: #0f172a;
+  /* ── Legacy Variables (Preserved for backward compatibility during refactor) ── */
+  --bg-color: #09090b; /* Zinc 950 */
   --text-color: #f8fafc;
-  --primary: #3b82f6;
-  --primary-hover: #2563eb;
-  --surface: #1e293b;
-  --surface-border: #334155;
-  --user-msg: #3b82f6;
-  --bot-msg: #1e293b;
+  --primary: #ffffff; /* AI-first primary is often white on dark */
+  --primary-hover: #e2e8f0;
+  --surface: #18181b; /* Zinc 900 */
+  --surface-border: #27272a; /* Zinc 800 */
+  --user-msg: #27272a; /* Neutral dark for user */
+  --bot-msg: transparent;
+
+  /* ── CampusMind Design System Tokens ── */
+  /* Colors */
+  --cm-bg: #0b0f19;
+  --cm-fg: #f8fafc;
+  --cm-muted: #94a3b8;
+  --cm-muted-bg: #1e293b;
+  --cm-border: #334155;
+  --cm-primary: #ffffff;
+  --cm-primary-fg: #000000;
+  --cm-secondary: #1e293b;
+  --cm-secondary-fg: #fafafa;
+  --cm-accent: #3b82f6; /* Subtle blue */
+  --cm-accent-fg: #ffffff;
+  --cm-success: #10b981;
+  --cm-warning: #f59e0b;
+  --cm-error: #ef4444;
+  --cm-info: #3b82f6;
+  
+  /* Typography Scale */
+  --font-sans: 'Inter', 'Geist', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-2xl: 1.5rem; /* 24px */
+  --text-3xl: 1.875rem; /* 30px */
+
+  /* Font Weights */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* Spacing (8pt grid) */
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-12: 3rem;    /* 48px */
+  --space-16: 4rem;    /* 64px */
+
+  /* Border Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* Shadows / Elevation */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
+
+  /* Animation Timings */
+  --transition-fast: 150ms cubic-bezier(.22,.61,.36,1);
+  --transition-normal: 180ms cubic-bezier(.22,.61,.36,1);
+  
+  /* Layout Breakpoints (referenced in media queries) */
+  /* sm: 640px, md: 768px, lg: 1024px, xl: 1280px */
 }
 
+/* ── Background & Layout ── */
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
-  background-color: var(--bg-color);
-  color: var(--text-color);
+  font-family: var(--font-sans);
+  background-color: var(--cm-bg);
+  color: var(--cm-fg);
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   height: 100vh;
   display: flex;
   justify-content: center;
+  position: relative;
+}
+
+/* Removed global background to scope it specifically to chat-main */
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(circle at center, transparent 0%, var(--cm-bg) 100%);
+  pointer-events: none;
 }
 
 #root {
@@ -25,36 +113,36 @@ body {
   justify-content: center;
 }
 
-.app-chat-layout {
-  display: flex;
-  width: 100vw;
-  height: 100vh;
-  overflow: hidden;
-}
+
 
 .sidebar {
-  width: 260px;
+  width: 240px;
   background-color: var(--surface);
   border-right: 1px solid var(--surface-border);
   display: flex;
   flex-direction: column;
-  padding: 1rem;
+  padding: 0.75rem;
 }
 
 .new-chat-btn {
-  background-color: transparent;
-  border: 1px solid var(--surface-border);
-  color: var(--text-color);
-  padding: 0.75rem;
-  border-radius: 8px;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #ffffff;
+  padding: 0.75rem 1rem;
+  border-radius: 9999px;
   cursor: pointer;
   text-align: left;
-  transition: background-color 0.2s;
-  margin-bottom: 1rem;
+  transition: all var(--transition-normal);
+  margin-bottom: 0.75rem;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  font-weight: 600;
+  border: none;
+  display: flex;
+  align-items: center;
 }
 
 .new-chat-btn:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.5);
+  transform: translateY(-1px);
 }
 
 .chat-history-list {
@@ -463,15 +551,75 @@ body {
   text-decoration: underline;
 }
 
-/* User profile header styles */
-.user-profile-header {
+/* User profile header styles (anchored at bottom) */
+.sidebar-bottom-container {
+  margin-top: auto;
+  border-top: 1px solid rgba(59, 130, 246, 0.10);
+  padding-top: var(--space-4);
+}
+
+.sidebar-profile-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.sidebar-static-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background-color: transparent;
+  border-radius: 12px;
+}
+
+.sidebar-menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1rem;
-  background-color: var(--surface);
-  border-bottom: 1px solid var(--surface-border);
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #CBD5E1;
   font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 200ms ease;
+}
+
+.sidebar-menu-item:hover {
+  background-color: #172036;
+  border-color: rgba(59, 130, 246, 0.12);
+}
+
+.user-profile-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.5rem;
+  border-radius: 8px;
+  background-color: transparent;
+  border: none;
+  font-size: 0.9rem;
+  transition: background-color var(--transition-fast);
+  cursor: pointer;
+  flex: 1;
+}
+.user-profile-header:hover {
+  background-color: #172036;
+}
+
+.user-avatar-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
 }
 
 .user-info {
