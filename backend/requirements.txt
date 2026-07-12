@@ -1,0 +1,60 @@
+# CampusMind Backend — Python Dependencies
+# Generated from working venv (Python 3.11+)
+#
+# Install:
+#   cd backend
+#   python -m venv venv
+#   venv\Scripts\activate          # Windows
+#   source venv/bin/activate       # Mac/Linux
+#   pip install -r requirements.txt
+#
+# NOTE: For OCR support (scanned PDFs) you also need:
+#   pip install pymupdf pytesseract
+#   AND install Tesseract binary from:
+#   https://github.com/UB-Mannheim/tesseract/wiki
+#   (OCR is optional — the app works without it)
+
+# ── Web Framework ──────────────────────────────────────────────────────────────
+fastapi==0.138.0
+uvicorn==0.49.0
+python-multipart==0.0.32
+starlette==1.3.1
+
+# ── Data Validation ────────────────────────────────────────────────────────────
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# ── AI / LLM ───────────────────────────────────────────────────────────────────
+groq==0.37.1
+google-genai==2.9.0
+google-auth==2.55.0
+
+# ── LangChain (PDF processing + embeddings) ────────────────────────────────────
+langchain==1.3.10
+langchain-community==0.4.2
+langchain-core==1.4.8
+langchain-google-genai==4.2.5
+langchain-groq==1.1.3
+langchain-text-splitters==1.1.2
+
+# ── Database (Supabase) ────────────────────────────────────────────────────────
+supabase==2.31.0
+
+# ── PDF Processing ─────────────────────────────────────────────────────────────
+pdfplumber==0.11.10
+pypdf==6.13.3
+
+# ── HTTP Clients ───────────────────────────────────────────────────────────────
+httpx==0.28.1
+requests==2.34.2
+aiohttp==3.14.1
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv==1.2.2
+numpy==2.5.0
+pillow==12.2.0
+
+# ── Optional: OCR support for scanned PDFs ─────────────────────────────────────
+# Uncomment the lines below and install Tesseract binary if you need OCR:
+# pymupdf==1.25.5
+# pytesseract==0.3.13

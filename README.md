@@ -127,23 +127,39 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+> **OCR support (optional):** To process scanned/image-based PDFs, also run:
+> ```bash
+> pip install pymupdf pytesseract
+> ```
+> And install the [Tesseract binary](https://github.com/UB-Mannheim/tesseract/wiki). The app runs fine without this.
+
 ### 3. Environment Variables
-Create a `.env` file in the **root** of the project:
+A template is provided — copy it and fill in your keys:
+
+```bash
+# Mac/Linux
+cp .env.example .env
+
+# Windows
+copy .env.example .env
+```
+
+Then open `.env` and set each value:
 
 ```env
 # AI APIs
-GROQ_API_KEY=your_groq_api_key
-GOOGLE_API_KEY=your_google_gemini_api_key
+GROQ_API_KEY=your_groq_api_key           # https://console.groq.com
+GOOGLE_API_KEY=your_google_gemini_api_key # https://aistudio.google.com/app/apikey
 
-# Supabase
-SUPABASE_URL=your_supabase_project_url
+# Supabase (Settings → API in your Supabase project)
+SUPABASE_URL=https://your-project-id.supabase.co
 SUPABASE_SERVICE_KEY=your_supabase_service_role_key
 
-# Student Telegram Bot (existing)
+# Student Telegram Bot — create via @BotFather
 TELEGRAM_BOT_TOKEN=your_student_bot_token
 TELEGRAM_WEBHOOK_URL=https://your-ngrok-url.ngrok-free.app/api/telegram/webhook
 
-# Staff Telegram Bot (new — create via @BotFather)
+# Staff Telegram Bot — create a second bot via @BotFather
 STAFF_BOT_TOKEN=your_staff_bot_token
 STAFF_BOT_WEBHOOK_URL=https://your-ngrok-url.ngrok-free.app/api/staff/telegram/webhook
 ```
@@ -194,21 +210,24 @@ CampusMind/
 │   ├── notice_agent.py      # Agentic notice classification & dispatch
 │   ├── pdf_processor.py     # PDF ingestion (text, OCR, tables)
 │   ├── telegram_bot.py      # Student Telegram bot
-│   ├── staff_bot.py         # Staff Telegram bot (NEW)
-│   └── ingest.py            # Batch PDF ingestion utility
+│   ├── staff_bot.py         # Staff Telegram bot
+│   ├── ingest.py            # Batch PDF ingestion utility
+│   └── requirements.txt     # Python dependencies ← install this
 ├── frontend/
-│   └── src/
-│       ├── Chat.jsx          # Main chat + complaint UI
-│       ├── Admin.jsx         # Admin panel
-│       ├── Auth.jsx          # Login / signup
-│       └── index.css         # All styles
+│   ├── src/
+│   │   ├── Chat.jsx          # Main chat + complaint UI
+│   │   ├── Admin.jsx         # Admin panel
+│   │   ├── Auth.jsx          # Login / signup
+│   │   └── index.css         # All styles
+│   └── package.json          # Node dependencies
 ├── supabase_migrations/
-│   └── 20230704170000_add_hostel_and_staff.sql  # NEW migration
+│   └── 20230704170000_add_hostel_and_staff.sql  # Hostel & staff tables
 ├── supabase_setup.sql
 ├── notices_migration.sql
 ├── fix_rls.sql
 ├── telegram_migration.sql
-└── .env                      # Environment variables (not committed)
+├── .env.example              # Environment variable template ← copy to .env
+└── .env                      # Your secrets (not committed to git)
 ```
 
 ---
