@@ -493,22 +493,6 @@ export default function Chat({ user, onLogout }) {
               <div key={idx} className={`chat-bubble-row ${msg.role}`}>
                 <div className={`chat-bubble ${msg.role}`}>
                   <p style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</p>
-                  
-                  {msg.metadata && msg.metadata.length > 0 && (
-                    <div className="chat-sources">
-                      <div style={{fontSize: 'var(--text-xs)', fontWeight: 'var(--font-semibold)', color: 'var(--cm-muted)', textTransform: 'uppercase'}}>Sources</div>
-                      {msg.metadata.map((meta, i) => {
-                        const fileName = meta.source ? meta.source.split(/[\\/]/).pop() : 'Unknown';
-                        const page = meta.page != null ? ` (p.${meta.page + 1})` : '';
-                        return (
-                          <div key={i} className="chat-source-item">
-                            <span className="chat-source-badge">{fileName}{page}</span>
-                            <span style={{flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>{msg.context?.[i]?.substring(0, 100)}…</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
                 </div>
               </div>
             ))}
