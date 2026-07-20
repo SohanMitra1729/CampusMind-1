@@ -4,6 +4,8 @@ import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/Card';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function Auth({ onAuthSuccess, initialResetToken = null }) {
   const [view, setView] = useState(initialResetToken ? 'reset-password' : 'login');
   const [email, setEmail] = useState('');
@@ -28,7 +30,7 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
     clearMessage();
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/login', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier, password }),
@@ -69,7 +71,7 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
     clearMessage();
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/signup', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, username, scholar_id: scholarId, password }),
@@ -102,7 +104,7 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
     clearMessage();
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/forgot-password', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ identifier }),
@@ -136,7 +138,7 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
     clearMessage();
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/auth/reset-password', {
+      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ access_token: initialResetToken, password }),

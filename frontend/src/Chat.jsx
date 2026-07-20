@@ -5,6 +5,8 @@ import { Dropdown, DropdownItem } from './components/ui/Dropdown';
 import { Dialog, DialogHeader, DialogTitle, DialogClose } from './components/ui/Dialog';
 import { Badge } from './components/ui/Badge';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 export default function Chat({ user, onLogout }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -40,7 +42,7 @@ export default function Chat({ user, onLogout }) {
   const fetchNotifications = async () => {
     if (!user?.id) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/notifications?user_id=${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/notifications?user_id=${user.id}`);
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.map(n => ({
@@ -58,7 +60,7 @@ export default function Chat({ user, onLogout }) {
   };
 
   useEffect(() => {
-    fetch('http://127.0.0.1:8000/api/hostels')
+    fetch(`${API_BASE_URL}/api/hostels`)
       .then(r => r.ok ? r.json() : [])
       .then(data => setHostels(data))
       .catch(() => {});
@@ -100,7 +102,7 @@ export default function Chat({ user, onLogout }) {
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
     try {
-      await fetch(`http://127.0.0.1:8000/api/notifications/read-all?user_id=${user.id}`, { method: 'PATCH' });
+      await fetch(`${API_BASE_URL}/api/notifications/read-all?user_id=${user.id}`, { method: 'PATCH' });
     } catch (e) {
       console.error('Failed to mark all read', e);
     }
@@ -112,7 +114,7 @@ export default function Chat({ user, onLogout }) {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, unread: !n.unread } : n));
     if (notif.unread) {
       try {
-        await fetch(`http://127.0.0.1:8000/api/notifications/${id}/read`, { method: 'PATCH' });
+        await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, { method: 'PATCH' });
       } catch (e) {}
     }
   };
@@ -136,7 +138,7 @@ export default function Chat({ user, onLogout }) {
 
   const fetchChats = async () => {
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/chats?user_id=${user.id}`);
+      const response = await fetch(`${API_BASE_URL}/api/chats?user_id=${user.id}`);
       if (response.ok) {
         const data = await response.json();
         setChatSessions(data);
@@ -150,7 +152,7 @@ export default function Chat({ user, onLogout }) {
     if (!user?.id) return;
     setMyComplaintsLoading(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/my-complaints?user_id=${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/my-complaints?user_id=${user.id}`);
       if (res.ok) setMyComplaints(await res.json());
     } catch (e) {
       console.error('Failed to fetch my complaints', e);
@@ -164,7 +166,7 @@ export default function Chat({ user, onLogout }) {
     setMessages([]);
     setIsLoading(true);
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/chats/${chatId}/messages`);
+      const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}/messages`);
       if (response.ok) {
         const data = await response.json();
         setMessages(data);
@@ -186,7 +188,7 @@ export default function Chat({ user, onLogout }) {
     if (!window.confirm("Are you sure you want to delete this conversation?")) return;
 
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/chats/${chatId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, { method: 'DELETE' });
       if (res.ok) {
         setChatSessions((prev) => prev.filter((c) => c.id !== chatId));
         if (activeChatId === chatId) {
@@ -217,7 +219,7 @@ export default function Chat({ user, onLogout }) {
     setSelectedSource(null); // Reset after submitting
 
     if (user?.id) {
-      fetch('http://127.0.0.1:8000/api/complaint/classify', {
+      fetch(`${API_BASE_URL}/api/complaint/classify`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: inputText, user_info: user }),
@@ -246,7 +248,7 @@ export default function Chat({ user, onLogout }) {
         payload.chat_id = activeChatId;
       }
 
-      const response = await fetch('http://127.0.0.1:8000/api/chat', {
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -292,7 +294,7 @@ export default function Chat({ user, onLogout }) {
     }
     setComplaintSubmitting(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/complaint', {
+      const res = await fetch(`${API_BASE_URL}/api/complaint`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -318,7 +320,7 @@ export default function Chat({ user, onLogout }) {
   const handleVote = async (complaintId) => {
     if (votedComplaints.has(complaintId)) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/complaint/${complaintId}/vote`, {
+      const res = await fetch(`${API_BASE_URL}/api/complaint/${complaintId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: '', user_info: user }),

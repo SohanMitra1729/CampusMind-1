@@ -6,6 +6,8 @@ import { Badge } from './components/ui/Badge';
 import { Input } from './components/ui/Input';
 import { Textarea } from './components/ui/Textarea';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
 const NOTICE_TYPE_LABELS = {
   holiday:        { label: 'Holiday',        icon: '🏖️', color: 'emerald' },
   exam_notice:    { label: 'Exam Notice',    icon: '📝', color: 'amber' },
@@ -56,7 +58,7 @@ export default function Admin({ onBack }) {
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/documents');
+      const res = await fetch(`${API_BASE_URL}/api/admin/documents`);
       if (res.ok) setDocuments(await res.json());
     } catch (e) {
       console.error('Failed to load documents', e);
@@ -68,7 +70,7 @@ export default function Admin({ onBack }) {
   const fetchPostedNotices = async () => {
     setIsLoadingNotices(true);
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/notices-list');
+      const res = await fetch(`${API_BASE_URL}/api/admin/notices-list`);
       if (res.ok) setPostedNotices(await res.json());
     } catch (e) {
       console.error('Failed to load notices', e);
@@ -83,7 +85,7 @@ export default function Admin({ onBack }) {
       const params = new URLSearchParams();
       if (status)   params.append('status',   status);
       if (category) params.append('category', category);
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/complaints?${params}`);
+      const res = await fetch(`${API_BASE_URL}/api/admin/complaints?${params}`);
       if (res.ok) setComplaints(await res.json());
     } catch (e) {
       console.error('Failed to load complaints', e);
@@ -95,7 +97,7 @@ export default function Admin({ onBack }) {
   const updateComplaintStatus = async (complaintId, newStatus) => {
     setUpdatingComplaintId(complaintId);
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/complaints/${complaintId}/status`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/complaints/${complaintId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
@@ -164,7 +166,7 @@ export default function Admin({ onBack }) {
       const t4 = setTimeout(() => setUploadStep('Indexing into pgvector...'), 9000);
       const t5 = setTimeout(() => setUploadStep('Running agentic classifier...'), 13000);
 
-      const res = await fetch('http://127.0.0.1:8000/api/admin/upload', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/upload`, {
         method: 'POST',
         body: formData,
       });
@@ -203,7 +205,7 @@ export default function Admin({ onBack }) {
   const handleDelete = async (filename) => {
     if (!window.confirm(`Remove '${filename}' from the knowledge base?`)) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/admin/documents/${encodeURIComponent(filename)}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/documents/${encodeURIComponent(filename)}`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -229,7 +231,7 @@ export default function Admin({ onBack }) {
     setNoticeResult(null);
 
     try {
-      const res = await fetch('http://127.0.0.1:8000/api/admin/notices', {
+      const res = await fetch(`${API_BASE_URL}/api/admin/notices`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: noticeTitle, content: noticeContent }),
