@@ -250,8 +250,9 @@ async def forgot_password(req: ForgotPasswordRequest):
             raise HTTPException(status_code=400, detail=f"Username resolution failed: {str(e)}")
 
     try:
+        FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
         supabase.auth.reset_password_for_email(email, {
-            "redirect_to": "http://localhost:3000"
+            "redirect_to": FRONTEND_URL
         })
         return {"message": "Password reset email sent. Please check your inbox."}
     except Exception as e:

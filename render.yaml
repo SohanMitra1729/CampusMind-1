@@ -23,4 +23,6 @@ services:
         sync: false
       - key: STAFF_BOT_WEBHOOK_URL
         sync: false
+      - key: FRONTEND_URL
+        sync: false
     rootDir: backend
