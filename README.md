@@ -1,6 +1,6 @@
 # CampusMind
 
-CampusMind is an AI-powered campus and hostel management platform for universities. It combines a Retrieval-Augmented Generation (RAG) knowledge base, agentic LLM workflows, a dual Telegram bot system (students + staff), and real-time complaint routing to create a fully automated campus experience.
+CampusMind is an AI-powered campus and hostel management platform for universities. It combines a Retrieval-Augmented Generation (RAG) knowledge base, agentic LLM workflows, a dual Telegram bot system (students + staff), and real-time complaint routing to create a fully automated campus experiences.
 
 ---
 
