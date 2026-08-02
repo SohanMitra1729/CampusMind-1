@@ -155,3 +155,31 @@
   grid-template-columns: 1fr 1fr;
   gap: var(--space-4);
 }
+
+/* ══════════════════════════════════════════════════════
+   MOBILE RESPONSIVENESS — Auth
+   ══════════════════════════════════════════════════════ */
+
+@media (max-width: 520px) {
+  .auth-wrapper {
+    padding: var(--space-3);
+    align-items: flex-start;
+    padding-top: calc(var(--space-8) + env(safe-area-inset-top));
+  }
+
+  .auth-card-container {
+    max-width: 100%;
+    border-radius: var(--radius-lg);
+  }
+
+  /* Collapse side-by-side fields to stack vertically */
+  .auth-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 380px) {
+  .auth-wrapper {
+    padding: var(--space-2);
+  }
+}

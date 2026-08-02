@@ -207,3 +207,62 @@
   padding-top: var(--space-4);
   border-top: 1px solid var(--cm-border);
 }
+
+/* ══════════════════════════════════════════════════════
+   MOBILE RESPONSIVENESS — Admin
+   ══════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+  /* Navbar — tighter on mobile */
+  .admin-navbar {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* Header section — reduce padding */
+  .admin-header-section {
+    padding: var(--space-4) var(--space-4) var(--space-3);
+  }
+  .admin-header-title {
+    font-size: var(--text-xl);
+    margin-bottom: var(--space-4);
+  }
+
+  /* Tabs — horizontally scrollable, don't shrink */
+  .admin-tabs-list {
+    gap: var(--space-4);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .admin-tabs-list::-webkit-scrollbar {
+    display: none;
+  }
+  .admin-tab-item {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Content — reduce outer padding */
+  .admin-content-container {
+    padding: var(--space-4);
+  }
+
+  /* Grid — always single column on mobile */
+  .admin-grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-navbar {
+    padding: var(--space-3) var(--space-3);
+  }
+  .admin-brand-text h1 {
+    font-size: var(--text-sm);
+  }
+  .admin-content-container {
+    padding: var(--space-3);
+  }
+}

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus, MessageSquare, Trash2, Send, Loader2, User as UserIcon, Bell, LogOut, ChevronDown, CheckCircle2, AlertCircle, Sparkles, Calendar, Home, BellRing, Paperclip } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Send, Loader2, User as UserIcon, Bell, LogOut, ChevronDown, CheckCircle2, AlertCircle, Sparkles, Calendar, Home, BellRing, Paperclip, Menu, X } from 'lucide-react';
 import { Button } from './components/ui/Button';
 import { Dropdown, DropdownItem } from './components/ui/Dropdown';
 import { Dialog, DialogHeader, DialogTitle, DialogClose } from './components/ui/Dialog';
@@ -8,6 +8,7 @@ import { Badge } from './components/ui/Badge';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export default function Chat({ user, onLogout }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -372,8 +373,24 @@ export default function Chat({ user, onLogout }) {
           )}
         </div>
       </Dialog>
+      {/* ── Mobile Sidebar Overlay ── */}
+      {sidebarOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* ── Sidebar ── */}
-      <div className="chat-sidebar">
+      <div className={`chat-sidebar${sidebarOpen ? ' sidebar-open' : ''}`}>
+        {/* Mobile close button */}
+        <button
+          className="sidebar-close-btn"
+          onClick={() => setSidebarOpen(false)}
+          aria-label="Close menu"
+        >
+          <X size={20} />
+        </button>
         <button className="new-chat-btn" onClick={handleNewChat}>
           <Plus className="cm-icon-sm" style={{marginRight: '8px'}} /> New Chat
         </button>
@@ -470,9 +487,30 @@ export default function Chat({ user, onLogout }) {
       {/* ── Main Chat Area ── */}
       <div className="chat-main">
         <div className="chat-header-bar">
-          <div>
+          {/* Hamburger — mobile only */}
+          <button
+            className="sidebar-hamburger-btn"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open menu"
+          >
+            <Menu size={22} />
+          </button>
+          <div className="chat-header-center">
             <div className="chat-header-title">CampusMind</div>
-            <div className="chat-header-subtitle">AI Campus Assistant — Academics, notices, and hostel services</div>
+            <div className="chat-header-subtitle">AI Campus Assistant</div>
+          </div>
+          {/* Mobile notification bell in header */}
+          <div style={{position: 'relative'}} className="mobile-header-notif">
+            <button
+              className="chat-delete-btn"
+              style={{padding: 'var(--space-2)', position: 'relative', opacity: 1}}
+              onClick={() => setShowNotifications(!showNotifications)}
+            >
+              <Bell className="cm-icon-md text-[var(--cm-fg)]" />
+              {unreadCount > 0 && (
+                <span style={{position: 'absolute', top: 0, right: 0, width: '10px', height: '10px', backgroundColor: 'var(--cm-error)', borderRadius: 'var(--radius-full)', border: '2px solid var(--cm-bg)'}}></span>
+              )}
+            </button>
           </div>
         </div>
 

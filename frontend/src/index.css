@@ -91,9 +91,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   justify-content: center;
   position: relative;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Removed global background to scope it specifically to chat-main */
@@ -2638,7 +2641,172 @@ body::after {
   padding: 0;
 }
 
+
 .admin-back-link:hover {
   color: #94a3b8;
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════
+   GLOBAL MOBILE RESPONSIVENESS
+   ══════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+
+  /* ── Notification Popover → Fixed Bottom Sheet on mobile ── */
+  .notif-popover {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    width: 100%;
+    max-height: 72vh;
+    border-radius: 20px 20px 0 0;
+    border-bottom: none;
+    animation: popoverSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Drag indicator pill for bottom sheet */
+  .notif-popover::before {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.2);
+    margin: 10px auto 0;
+  }
+
+  .notif-popover-header {
+    padding-top: 0.5rem;
+  }
+
+  .notif-list {
+    max-height: 50vh;
+  }
+
+  /* ── Auth card — full width on mobile ── */
+  .auth-container {
+    padding: var(--space-3);
+    align-items: flex-start;
+    padding-top: calc(3rem + env(safe-area-inset-top));
+  }
+
+  .auth-card {
+    padding: 1.75rem 1.25rem;
+    border-radius: 14px;
+  }
+
+  .auth-header h2 {
+    font-size: 1.6rem;
+  }
+
+  /* ── Legacy Admin portal — compact on mobile ── */
+  .admin-portal-container {
+    padding: 1rem;
+  }
+
+  .admin-header {
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .admin-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .admin-content-grid {
+    gap: 1rem;
+  }
+
+  .admin-card {
+    padding: 1.25rem;
+  }
+
+  /* Admin login card — mobile */
+  .admin-login-card {
+    padding: 2rem 1.5rem;
+    border-radius: 16px;
+    margin: 1rem;
+  }
+
+  /* Admin tabs — scrollable */
+  .admin-tabs {
+    padding: 0 1rem;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 0;
+  }
+  .admin-tabs::-webkit-scrollbar { display: none; }
+  .admin-tab-btn {
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 0.75rem 0.85rem;
+    font-size: 0.82rem;
+  }
+
+  /* Complaint banner — wrapping fix on mobile */
+  .complaint-banner,
+  .complaint-success-card {
+    padding: 0.85rem 0.9rem;
+  }
+
+  .complaint-banner-actions {
+    gap: 0.5rem;
+  }
+  .complaint-submit-btn,
+  .complaint-cancel-btn {
+    flex: 1;
+    justify-content: center;
+  }
+
+  /* My complaints panel — more height on mobile */
+  .my-complaints-panel {
+    max-height: 320px;
+  }
+
+  /* Sidebar profile area — stack on mobile */
+  .sidebar-profile-row {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+}
+
+/* ── Small phones (≤ 480px) ── */
+@media (max-width: 480px) {
+  .admin-login-card {
+    padding: 1.75rem 1.25rem;
+    margin: 0.75rem;
+  }
+
+  .admin-login-header h2 {
+    font-size: 1.3rem;
+  }
+
+  .admin-badge-icon {
+    width: 44px;
+    height: 44px;
+    font-size: 1.8rem;
+  }
+
+  /* Ensure touch targets are at least 44px */
+  .sidebar-menu-item,
+  .notif-tab,
+  .filter-chip,
+  .admin-tab-btn {
+    min-height: 44px;
+  }
+}
+
+/* ── Viewport height fix for mobile browsers (avoids content hidden under browser chrome) ── */
+@supports (height: 100dvh) {
+  .auth-container,
+  .admin-login-overlay,
+  .app-chat-layout {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}

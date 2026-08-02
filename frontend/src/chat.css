@@ -20,6 +20,26 @@
   transition: transform var(--transition-normal);
 }
 
+/* Mobile-only sidebar close button — hidden on desktop */
+.sidebar-close-btn {
+  display: none;
+}
+
+/* Mobile-only hamburger — hidden on desktop */
+.sidebar-hamburger-btn {
+  display: none;
+}
+
+/* Mobile-only header notification bell */
+.mobile-header-notif {
+  display: none;
+}
+
+/* Chat header center block */
+.chat-header-center {
+  flex: 1;
+}
+
 .chat-new-btn {
   display: flex;
   align-items: center;
@@ -447,4 +467,191 @@
   font-weight: 500;
   line-height: 1.3;
   color: #CBD5E1;
+}
+
+/* ══════════════════════════════════════════════════════
+   MOBILE RESPONSIVENESS — Chat UI
+   ══════════════════════════════════════════════════════ */
+
+/* ── Tablet (≤ 1024px): slightly narrow sidebar ── */
+@media (max-width: 1024px) {
+  .chat-sidebar {
+    width: 200px;
+    min-width: 200px;
+  }
+}
+
+/* ── Mobile (≤ 768px): slide-in drawer sidebar ── */
+@media (max-width: 768px) {
+
+  /* Sidebar becomes a fixed full-height drawer */
+  .chat-sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100dvh; /* dynamic viewport height — avoids browser chrome overlap */
+    width: 280px;
+    min-width: unset;
+    transform: translateX(-100%);
+    z-index: 200;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    padding-top: calc(var(--space-4) + env(safe-area-inset-top));
+  }
+
+  /* When sidebar is open, slide it into view */
+  .chat-sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  /* Dim overlay when sidebar is open */
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    z-index: 199;
+    animation: overlayFadeIn 0.2s ease;
+  }
+
+  @keyframes overlayFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* Show close button inside sidebar on mobile */
+  .sidebar-close-btn {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 0.5rem 0.5rem 1rem;
+    margin-bottom: 0.25rem;
+    transition: color 0.15s;
+    align-self: flex-end;
+  }
+  .sidebar-close-btn:hover {
+    color: #f8fafc;
+  }
+
+  /* Show hamburger in the header on mobile */
+  .sidebar-hamburger-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: #f8fafc;
+    cursor: pointer;
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    transition: background 0.15s;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .sidebar-hamburger-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  /* Show mobile notif bell in header on mobile */
+  .mobile-header-notif {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  /* Header bar: 3-column flex (hamburger | title | bell) */
+  .chat-header-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 12px 14px 10px;
+  }
+
+  .chat-header-center {
+    flex: 1;
+    text-align: center;
+  }
+
+  .chat-header-title {
+    font-size: 0.92rem;
+  }
+  .chat-header-subtitle {
+    font-size: 0.65rem;
+  }
+
+  /* Input container — reduce horizontal padding */
+  .chat-input-container {
+    padding: 0 10px 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  /* Input wrapper — slightly less rounded to avoid clipping */
+  .chat-input-wrapper {
+    padding: 0.5rem 0.5rem 0.5rem 1rem;
+    border-radius: 20px;
+  }
+
+  /* Messages inner — tighter padding */
+  .chat-messages-inner {
+    padding: 12px 10px 12px;
+    gap: var(--space-6);
+  }
+
+  /* Chat bubbles — wider on mobile */
+  .chat-bubble {
+    max-width: 88%;
+    font-size: 0.875rem;
+  }
+
+  /* Quick actions: 2-column on mobile */
+  .quick-actions-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    max-width: 100%;
+    margin: 0 0 16px;
+    padding: 0 4px;
+  }
+
+  .qa-card {
+    padding: var(--space-3);
+    flex-direction: row;
+    gap: var(--space-2);
+    border-radius: 10px;
+  }
+
+  /* Empty state — smaller on mobile */
+  .chat-empty-title {
+    font-size: 1.25rem;
+  }
+  .chat-empty-logo {
+    width: 64px;
+    height: 64px;
+    margin-bottom: var(--space-4);
+  }
+  .chat-empty-desc {
+    font-size: 0.8rem;
+  }
+}
+
+/* ── Very small phones (≤ 380px) ── */
+@media (max-width: 380px) {
+  .chat-sidebar {
+    width: 260px;
+  }
+
+  .chat-input-wrapper {
+    padding: 0.45rem 0.45rem 0.45rem 0.85rem;
+  }
+
+  .chat-send-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .quick-actions-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
 }
