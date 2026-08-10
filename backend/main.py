@@ -8,7 +8,7 @@ import os
 import time
 import shutil
 from pathlib import Path
-from supabase.client import create_client
+
 from rag import get_answer, supabase, supabase_url
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from pdf_processor import process_pdf
@@ -261,10 +261,19 @@ async def forgot_password(req: ForgotPasswordRequest):
 @app.post("/api/auth/reset-password")
 async def reset_password(req: ResetPasswordRequest):
     try:
-        # Create user client using the user's access token to authorize the update
-        user_client = create_client(supabase_url, req.access_token)
-        user_client.auth.update_user({"password": req.password})
+        # Verify the access token and get the user from it
+        user_response = supabase.auth.get_user(req.access_token)
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=401, detail="Invalid or expired reset token.")
+
+        # Use admin to update the user's password by their user ID
+        supabase.auth.admin.update_user_by_id(
+            user_response.user.id,
+            {"password": req.password}
+        )
         return {"message": "Password has been reset successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
