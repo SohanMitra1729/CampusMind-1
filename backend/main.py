@@ -32,7 +32,8 @@ from complaint_agent import (
 )
 from telegram_bot import handle_update, setup_webhook
 from staff_bot import handle_staff_update, setup_staff_webhook
-from security import get_current_user, get_current_user_optional, require_admin
+from app.core.config import settings
+from app.core.security import get_current_user, get_current_user_optional, require_admin
 
 app = FastAPI()
 
@@ -42,12 +43,10 @@ async def on_startup():
     await setup_staff_webhook()
 
 # ── CORS ─────────────────────────────────────────────────────────────────────────
-# Locked to the actual frontend origin — never use wildcard in a real deployment.
-_frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        _frontend_url,
+        settings.FRONTEND_URL,
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
@@ -59,50 +58,21 @@ app.add_middleware(
 
 # ── Request / Response Schemas ────────────────────────────────────────────────────
 
-class QueryRequest(BaseModel):
-    query: str
-    metadata_filter: Optional[Dict[str, Any]] = None
-    # user_info removed — derived server-side from the verified JWT
-    chat_id: Optional[str] = None
-
-class SignUpRequest(BaseModel):
-    name: str
-    email: EmailStr          # was plain str + manual regex — EmailStr handles validation
-    username: str
-    scholar_id: str
-    password: str
-
-class LoginRequest(BaseModel):
-    identifier: str
-    password: str
-
-class ForgotPasswordRequest(BaseModel):
-    identifier: str
-
-class ResetPasswordRequest(BaseModel):
-    access_token: str
-    password: str
-
-class NoticeRequest(BaseModel):
-    title: str
-    content: str
-
-class ComplaintClassifyRequest(BaseModel):
-    text: str
-    # user_info removed — derived from JWT when available
-
-class ComplaintRequest(BaseModel):
-    text: str
-    hostel_id: Optional[str] = None
-    room_number: Optional[str] = None
-    # user_info removed — derived from JWT
-
-class ComplaintStatusRequest(BaseModel):
-    status: str   # open | in_progress | resolved | dismissed
-
-class AdminAuthRequest(BaseModel):
-    username: str
-    password: str
+from app.schemas.auth import (
+    SignUpRequest,
+    LoginRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    AdminAuthRequest,
+)
+from app.schemas.chat import QueryRequest
+from app.schemas.complaint import (
+    ComplaintClassifyRequest,
+    ComplaintRequest,
+    ComplaintStatusRequest,
+)
+from app.schemas.notice import NoticeRequest
+import app.repositories.chat_repository as chat_repo
 
 
 # ── Internal helper: fetch full profile by verified user_id ──────────────────────
@@ -125,26 +95,17 @@ async def _fetch_profile(user_id: str) -> Dict[str, Any]:
 @app.post("/api/admin/auth")
 async def admin_auth(req: AdminAuthRequest):
     """
-    Verify admin credentials against ADMIN_USERNAME and ADMIN_SECRET env vars.
-    On success, returns the ADMIN_SECRET as an opaque Bearer token for all
-    subsequent /api/admin/* requests.
-
-    Required env vars:
-        ADMIN_USERNAME — admin login name
-        ADMIN_SECRET   — admin password / API key (also used as the Bearer token)
+    Verify admin credentials against ADMIN_USERNAME and ADMIN_SECRET settings.
     """
-    admin_username = os.environ.get("ADMIN_USERNAME", "")
-    admin_secret   = os.environ.get("ADMIN_SECRET", "")
-
-    if not admin_username or not admin_secret:
+    if not settings.ADMIN_USERNAME or not settings.ADMIN_SECRET:
         raise HTTPException(
             status_code=500,
             detail="Admin credentials not configured on server.",
         )
-    if req.username != admin_username or req.password != admin_secret:
+    if req.username != settings.ADMIN_USERNAME or req.password != settings.ADMIN_SECRET:
         raise HTTPException(status_code=403, detail="Invalid admin credentials.")
 
-    return {"token": admin_secret}
+    return {"token": settings.ADMIN_SECRET}
 
 
 # ── Chat Endpoints ────────────────────────────────────────────────────────────────
@@ -152,42 +113,23 @@ async def admin_auth(req: AdminAuthRequest):
 @app.post("/api/chat")
 async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
     user_id   = str(current_user.id)
-    # Fetch full profile so RAG can personalise answers (name, scholar_id, etc.)
     user_info = await _fetch_profile(user_id)
-
-    chat_id = request.chat_id
+    chat_id   = request.chat_id
 
     if not chat_id:
-        # Create a new chat session
-        title    = request.query[:50] + "..." if len(request.query) > 50 else request.query
-        chat_res = supabase.table("chats").insert({"user_id": user_id, "title": title}).execute()
-        chat_id   = chat_res.data[0]["id"]
+        title      = request.query[:50] + "..." if len(request.query) > 50 else request.query
+        new_chat   = chat_repo.create_chat(user_id, title)
+        chat_id    = new_chat["id"]
         chat_title = title
     else:
-        # Verify the chat belongs to this user (prevents IDOR)
-        chat_res = supabase.table("chats").select("title").eq("id", chat_id).eq("user_id", user_id).execute()
-        if not chat_res.data:
+        existing_chat = chat_repo.get_chat_by_id_and_user(chat_id, user_id)
+        if not existing_chat:
             raise HTTPException(status_code=403, detail="Chat not found or access denied.")
-        chat_title = chat_res.data[0]["title"]
+        chat_title = existing_chat["title"]
 
-    # Persist user message
-    supabase.table("messages").insert({
-        "chat_id": chat_id,
-        "role":    "user",
-        "content": request.query,
-    }).execute()
-
-    # Fetch recent history for context (exclude the message we just inserted)
-    msg_res = (
-        supabase.table("messages")
-        .select("role, content")
-        .eq("chat_id", chat_id)
-        .order("created_at", desc=True)
-        .limit(6)
-        .execute()
-    )
-    history_messages = msg_res.data[1:] if msg_res.data else []
-    chat_history     = history_messages[::-1]
+    # Persist user message & fetch recent history for RAG context
+    chat_repo.add_message(chat_id, "user", request.query)
+    chat_history = chat_repo.get_recent_history(chat_id, limit=6)
 
     # Run RAG pipeline
     result = get_answer(
@@ -198,11 +140,7 @@ async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
     )
 
     # Persist bot reply
-    supabase.table("messages").insert({
-        "chat_id": chat_id,
-        "role":    "bot",
-        "content": result["answer"],
-    }).execute()
+    chat_repo.add_message(chat_id, "bot", result["answer"])
 
     result["chat_id"] = chat_id
     result["title"]   = chat_title
@@ -212,56 +150,24 @@ async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
 @app.get("/api/chats")
 async def get_chats(current_user=Depends(get_current_user)):
     """Return all chat sessions for the authenticated user."""
-    user_id = str(current_user.id)
-    try:
-        res = (
-            supabase.table("chats")
-            .select("id, title, created_at")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .execute()
-        )
-        return res.data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return chat_repo.get_user_chats(str(current_user.id))
 
 
 @app.delete("/api/chats/{chat_id}")
 async def delete_chat(chat_id: str, current_user=Depends(get_current_user)):
-    user_id = str(current_user.id)
-    try:
-        # Verify ownership before deleting
-        check = supabase.table("chats").select("id").eq("id", chat_id).eq("user_id", user_id).execute()
-        if not check.data:
-            raise HTTPException(status_code=403, detail="Chat not found or access denied.")
-        supabase.table("chats").delete().eq("id", chat_id).execute()
-        return {"message": "Chat deleted successfully."}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    success = chat_repo.delete_chat(chat_id, str(current_user.id))
+    if not success:
+        raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+    return {"message": "Chat deleted successfully."}
 
 
 @app.get("/api/chats/{chat_id}/messages")
 async def get_messages(chat_id: str, current_user=Depends(get_current_user)):
     user_id = str(current_user.id)
-    try:
-        # Verify ownership
-        check = supabase.table("chats").select("id").eq("id", chat_id).eq("user_id", user_id).execute()
-        if not check.data:
-            raise HTTPException(status_code=403, detail="Chat not found or access denied.")
-        res = (
-            supabase.table("messages")
-            .select("id, role, content, created_at")
-            .eq("chat_id", chat_id)
-            .order("created_at", desc=False)
-            .execute()
-        )
-        return res.data
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    chat = chat_repo.get_chat_by_id_and_user(chat_id, user_id)
+    if not chat:
+        raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+    return chat_repo.get_chat_messages(chat_id)
 
 
 # ── Auth Endpoints ────────────────────────────────────────────────────────────────

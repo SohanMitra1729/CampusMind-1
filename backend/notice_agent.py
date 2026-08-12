@@ -14,11 +14,9 @@ import os
 import json
 from typing import Optional
 from groq import Groq
-from dotenv import load_dotenv
+from app.core.config import settings
 
-load_dotenv(dotenv_path="../.env")
-
-groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 # Document types that should trigger the notification pipeline
 NOTIFY_TYPES = {
@@ -241,7 +239,7 @@ def dispatch_notifications(
         # Push to Telegram for linked users
         try:
             from telegram_bot import send_telegram_push
-            if os.environ.get("TELEGRAM_BOT_TOKEN"):
+            if settings.TELEGRAM_BOT_TOKEN:
                 user_ids = [u["id"] for u in users]
                 tg_profiles = (
                     supabase.table("profiles")

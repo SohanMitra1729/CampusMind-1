@@ -1,25 +1,19 @@
 import os
 import requests
 from typing import Any, Dict, List, Optional
-from dotenv import load_dotenv
-from supabase.client import Client, create_client
 from groq import Groq
 
+from app.core.config import settings
+from app.db.supabase import supabase
 
-load_dotenv(dotenv_path="../.env")
+supabase_url = settings.SUPABASE_URL
+supabase_key = settings.SUPABASE_SERVICE_KEY
 
-# Supabase setup
-supabase_url = os.environ.get("SUPABASE_URL")
-supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
-
-# Groq setup
-groq_api_key = os.environ.get("GROQ_API_KEY")
-groq_client = Groq(api_key=groq_api_key)
+groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 def get_gemini_embedding(text: str) -> List[float]:
     """Call Google Gemini Embeddings API directly to fetch 3072-dim vector."""
-    api_key = os.environ.get("GOOGLE_API_KEY")
+    api_key = settings.GOOGLE_API_KEY
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
     payload = {
         "model": "models/gemini-embedding-2",
