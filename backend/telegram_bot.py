@@ -4,10 +4,11 @@ import json
 import httpx
 from typing import Dict, Any, Optional
 
+from app.core.config import settings
 from rag import get_answer
 from complaint_agent import classify_complaint, process_complaint, STATUS_LABELS
 
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN or ""
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 # In-memory state: {chat_id: "awaiting_scholar_id" | "awaiting_complaint" | None}
@@ -299,7 +300,7 @@ async def setup_webhook():
     Calls https://api.telegram.org/bot{TOKEN}/setWebhook
     with TELEGRAM_WEBHOOK_URL from .env
     """
-    webhook_url = os.environ.get("TELEGRAM_WEBHOOK_URL")
+    webhook_url = settings.TELEGRAM_WEBHOOK_URL
     if not BOT_TOKEN or not webhook_url:
         print("[TelegramBot] TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_URL not set. Skipping webhook setup.")
         return

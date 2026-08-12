@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 backend/venv/
+backend/.venv/          # uv virtual environment
 backend/.pytest_cache/
 
 # Node / JS
@@ -29,3 +30,6 @@ Thumbs.db
 # IDEs
 .vscode/
 .idea/
+
+# Generated files
+campusmind_review.md

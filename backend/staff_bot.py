@@ -21,7 +21,9 @@ import requests
 import httpx
 from typing import Optional, Dict, Any, List
 
-STAFF_BOT_TOKEN = os.environ.get("STAFF_BOT_TOKEN", "")
+from app.core.config import settings
+
+STAFF_BOT_TOKEN = settings.STAFF_BOT_TOKEN or ""
 STAFF_TELEGRAM_API = f"https://api.telegram.org/bot{STAFF_BOT_TOKEN}"
 
 # ── Role mapping: complaint category → staff role ─────────────────────────────
@@ -455,7 +457,7 @@ def handle_staff_update(update: dict, supabase):
 
 async def setup_staff_webhook():
     """Called on FastAPI startup to register the staff bot webhook."""
-    webhook_url = os.environ.get("STAFF_BOT_WEBHOOK_URL", "")
+    webhook_url = settings.STAFF_BOT_WEBHOOK_URL or ""
     if not STAFF_BOT_TOKEN or not webhook_url:
         print("[StaffBot] STAFF_BOT_TOKEN or STAFF_BOT_WEBHOOK_URL not set. Skipping webhook setup.")
         return
