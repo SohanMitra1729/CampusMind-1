@@ -13,6 +13,7 @@ function App() {
   // Admin-specific state — completely separate from user state
   const [isAdminRoute, setIsAdminRoute] = useState(false);
   const [adminAuthenticated, setAdminAuthenticated] = useState(false);
+  const [adminToken, setAdminToken] = useState(null);
 
   useEffect(() => {
     // ── Regular user session ────────────────────────────────────────────────
@@ -46,8 +47,10 @@ function App() {
     if (window.location.hash === '#admin-login') {
       setIsAdminRoute(true);
       // Restore admin session from sessionStorage (cleared on tab close)
-      if (sessionStorage.getItem('campusmind_admin') === 'true') {
+      const storedAdminToken = sessionStorage.getItem('campusmind_admin_token');
+      if (sessionStorage.getItem('campusmind_admin') === 'true' && storedAdminToken) {
         setAdminAuthenticated(true);
+        setAdminToken(storedAdminToken);
       }
     }
 
@@ -62,7 +65,9 @@ function App() {
 
   const handleAdminLogout = () => {
     sessionStorage.removeItem('campusmind_admin');
+    sessionStorage.removeItem('campusmind_admin_token');
     setAdminAuthenticated(false);
+    setAdminToken(null);
     // Navigate away from admin route
     window.history.replaceState(null, null, window.location.pathname);
     setIsAdminRoute(false);
@@ -79,9 +84,9 @@ function App() {
   // ── ADMIN FLOW (completely separate from regular users) ─────────────────────
   if (isAdminRoute) {
     if (!adminAuthenticated) {
-      return <AdminLogin onAdminSuccess={() => setAdminAuthenticated(true)} />;
+      return <AdminLogin onAdminSuccess={(token) => { setAdminAuthenticated(true); setAdminToken(token); }} />;
     }
-    return <Admin onBack={handleAdminLogout} />;
+    return <Admin adminToken={adminToken} onBack={handleAdminLogout} />;
   }
 
   // ── REGULAR USER FLOW ───────────────────────────────────────────────────────

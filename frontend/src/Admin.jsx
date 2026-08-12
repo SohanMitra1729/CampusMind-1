@@ -19,7 +19,12 @@ const NOTICE_TYPE_LABELS = {
   general:        { label: 'General',        icon: '📄', color: 'slate' },
 };
 
-export default function Admin({ onBack }) {
+export default function Admin({ adminToken, onBack }) {
+  // Helper: returns the Authorization header for all admin API calls
+  const adminHeaders = (extra = {}) => ({
+    Authorization: `Bearer ${adminToken || ''}`,
+    ...extra,
+  });
   const [activeTab, setActiveTab] = useState('upload'); // 'upload' | 'notice' | 'complaints'
 
   // ── Upload PDF state ──
@@ -58,7 +63,9 @@ export default function Admin({ onBack }) {
   const fetchDocuments = async () => {
     setIsLoadingDocs(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/documents`);
+      const res = await fetch(`${API_BASE_URL}/api/admin/documents`, {
+        headers: adminHeaders(),
+      });
       if (res.ok) setDocuments(await res.json());
     } catch (e) {
       console.error('Failed to load documents', e);
@@ -70,7 +77,9 @@ export default function Admin({ onBack }) {
   const fetchPostedNotices = async () => {
     setIsLoadingNotices(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/admin/notices-list`);
+      const res = await fetch(`${API_BASE_URL}/api/admin/notices-list`, {
+        headers: adminHeaders(),
+      });
       if (res.ok) setPostedNotices(await res.json());
     } catch (e) {
       console.error('Failed to load notices', e);
@@ -85,7 +94,9 @@ export default function Admin({ onBack }) {
       const params = new URLSearchParams();
       if (status)   params.append('status',   status);
       if (category) params.append('category', category);
-      const res = await fetch(`${API_BASE_URL}/api/admin/complaints?${params}`);
+      const res = await fetch(`${API_BASE_URL}/api/admin/complaints?${params}`, {
+        headers: adminHeaders(),
+      });
       if (res.ok) setComplaints(await res.json());
     } catch (e) {
       console.error('Failed to load complaints', e);
@@ -99,7 +110,7 @@ export default function Admin({ onBack }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/complaints/${complaintId}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ status: newStatus }),
       });
       if (res.ok) {
@@ -168,6 +179,7 @@ export default function Admin({ onBack }) {
 
       const res = await fetch(`${API_BASE_URL}/api/admin/upload`, {
         method: 'POST',
+        headers: adminHeaders(),   // no Content-Type: browser sets multipart boundary automatically
         body: formData,
       });
 
@@ -207,6 +219,7 @@ export default function Admin({ onBack }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/documents/${encodeURIComponent(filename)}`, {
         method: 'DELETE',
+        headers: adminHeaders(),
       });
       if (res.ok) {
         setUploadAlert({ type: 'success', text: `Removed '${filename}' from database.` });
@@ -233,7 +246,7 @@ export default function Admin({ onBack }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/admin/notices`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: adminHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ title: noticeTitle, content: noticeContent }),
       });
 

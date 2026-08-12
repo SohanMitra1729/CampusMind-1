@@ -1,11 +1,11 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Body
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Body, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr
 from typing import Any, Dict, Optional, List
 import uvicorn
+import asyncio
 import re
 import os
-import time
 import shutil
 from pathlib import Path
 
@@ -32,6 +32,7 @@ from complaint_agent import (
 )
 from telegram_bot import handle_update, setup_webhook
 from staff_bot import handle_staff_update, setup_staff_webhook
+from security import get_current_user, get_current_user_optional, require_admin
 
 app = FastAPI()
 
@@ -40,24 +41,33 @@ async def on_startup():
     await setup_webhook()
     await setup_staff_webhook()
 
+# ── CORS ─────────────────────────────────────────────────────────────────────────
+# Locked to the actual frontend origin — never use wildcard in a real deployment.
+_frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        _frontend_url,
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# ── Request / Response Schemas ────────────────────────────────────────────────────
+
 class QueryRequest(BaseModel):
     query: str
     metadata_filter: Optional[Dict[str, Any]] = None
-    user_info: Optional[Dict[str, Any]] = None
+    # user_info removed — derived server-side from the verified JWT
     chat_id: Optional[str] = None
 
-# Auth request schemas
 class SignUpRequest(BaseModel):
     name: str
-    email: str
+    email: EmailStr          # was plain str + manual regex — EmailStr handles validation
     username: str
     scholar_id: str
     password: str
@@ -79,163 +89,246 @@ class NoticeRequest(BaseModel):
 
 class ComplaintClassifyRequest(BaseModel):
     text: str
-    user_info: Optional[Dict[str, Any]] = None
+    # user_info removed — derived from JWT when available
 
 class ComplaintRequest(BaseModel):
     text: str
-    user_info: Optional[Dict[str, Any]] = None
-    hostel_id: Optional[str] = None    # UUID of the hostel (required for new complaints)
-    room_number: Optional[str] = None  # Optional room identifier
+    hostel_id: Optional[str] = None
+    room_number: Optional[str] = None
+    # user_info removed — derived from JWT
 
 class ComplaintStatusRequest(BaseModel):
     status: str   # open | in_progress | resolved | dismissed
 
-@app.post("/api/chat")
-async def chat(request: QueryRequest):
-    chat_id = request.chat_id
-    user_id = request.user_info.get("id") if request.user_info else None
-    
-    if not user_id:
-        # Fallback to no history if unauthenticated
-        result = get_answer(request.query, metadata_filter=request.metadata_filter, user_info=request.user_info)
-        return result
+class AdminAuthRequest(BaseModel):
+    username: str
+    password: str
 
-    # If no chat_id, create a new chat
+
+# ── Internal helper: fetch full profile by verified user_id ──────────────────────
+
+async def _fetch_profile(user_id: str) -> Dict[str, Any]:
+    """
+    Fetch the profiles row for a JWT-verified user_id.
+    Returns at minimum {"id": user_id} if the profile is missing.
+    Never raises — callers should handle missing fields gracefully.
+    """
+    try:
+        res = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
+        return res.data or {"id": user_id}
+    except Exception:
+        return {"id": user_id}
+
+
+# ── Admin Authentication ──────────────────────────────────────────────────────────
+
+@app.post("/api/admin/auth")
+async def admin_auth(req: AdminAuthRequest):
+    """
+    Verify admin credentials against ADMIN_USERNAME and ADMIN_SECRET env vars.
+    On success, returns the ADMIN_SECRET as an opaque Bearer token for all
+    subsequent /api/admin/* requests.
+
+    Required env vars:
+        ADMIN_USERNAME — admin login name
+        ADMIN_SECRET   — admin password / API key (also used as the Bearer token)
+    """
+    admin_username = os.environ.get("ADMIN_USERNAME", "")
+    admin_secret   = os.environ.get("ADMIN_SECRET", "")
+
+    if not admin_username or not admin_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="Admin credentials not configured on server.",
+        )
+    if req.username != admin_username or req.password != admin_secret:
+        raise HTTPException(status_code=403, detail="Invalid admin credentials.")
+
+    return {"token": admin_secret}
+
+
+# ── Chat Endpoints ────────────────────────────────────────────────────────────────
+
+@app.post("/api/chat")
+async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
+    user_id   = str(current_user.id)
+    # Fetch full profile so RAG can personalise answers (name, scholar_id, etc.)
+    user_info = await _fetch_profile(user_id)
+
+    chat_id = request.chat_id
+
     if not chat_id:
-        title = request.query[:50] + "..." if len(request.query) > 50 else request.query
+        # Create a new chat session
+        title    = request.query[:50] + "..." if len(request.query) > 50 else request.query
         chat_res = supabase.table("chats").insert({"user_id": user_id, "title": title}).execute()
-        chat_id = chat_res.data[0]["id"]
+        chat_id   = chat_res.data[0]["id"]
         chat_title = title
     else:
-        # Get chat title
-        chat_res = supabase.table("chats").select("title").eq("id", chat_id).execute()
-        chat_title = chat_res.data[0]["title"] if chat_res.data else "Chat"
+        # Verify the chat belongs to this user (prevents IDOR)
+        chat_res = supabase.table("chats").select("title").eq("id", chat_id).eq("user_id", user_id).execute()
+        if not chat_res.data:
+            raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+        chat_title = chat_res.data[0]["title"]
 
-    # Save user message
+    # Persist user message
     supabase.table("messages").insert({
         "chat_id": chat_id,
-        "role": "user",
-        "content": request.query
+        "role":    "user",
+        "content": request.query,
     }).execute()
 
-    # Fetch last 6 messages for context (excluding the one just inserted? Wait, I will include it)
-    # Actually, we shouldn't send the current query twice. Let's fetch history BEFORE inserting the current message,
-    # OR fetch last 7 and exclude the last one.
-    # It's cleaner to just fetch history BEFORE saving user message.
-    msg_res = supabase.table("messages").select("role, content").eq("chat_id", chat_id).order("created_at", desc=True).limit(6).execute()
-    
-    # We just saved the user message, so msg_res.data[0] is the current message.
-    # The history we pass to RAG should be everything BEFORE the current message.
+    # Fetch recent history for context (exclude the message we just inserted)
+    msg_res = (
+        supabase.table("messages")
+        .select("role, content")
+        .eq("chat_id", chat_id)
+        .order("created_at", desc=True)
+        .limit(6)
+        .execute()
+    )
     history_messages = msg_res.data[1:] if msg_res.data else []
-    chat_history = history_messages[::-1]
+    chat_history     = history_messages[::-1]
 
-    # Get answer
-    result = get_answer(request.query, metadata_filter=request.metadata_filter, user_info=request.user_info, chat_history=chat_history)
-    
-    # Save bot message
+    # Run RAG pipeline
+    result = get_answer(
+        request.query,
+        metadata_filter=request.metadata_filter,
+        user_info=user_info,
+        chat_history=chat_history,
+    )
+
+    # Persist bot reply
     supabase.table("messages").insert({
         "chat_id": chat_id,
-        "role": "bot",
-        "content": result["answer"]
+        "role":    "bot",
+        "content": result["answer"],
     }).execute()
 
     result["chat_id"] = chat_id
-    result["title"] = chat_title
+    result["title"]   = chat_title
     return result
 
-@app.get("/api/chats")
-async def get_chats(user_id: str):
-    if not user_id:
-        raise HTTPException(status_code=400, detail="User ID is required")
-    try:
-        res = supabase.table("chats").select("id, title, created_at").eq("user_id", user_id).order("created_at", desc=True).execute()
-        return res.data
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
 
-@app.delete("/api/chats/{chat_id}")
-async def delete_chat(chat_id: str):
+@app.get("/api/chats")
+async def get_chats(current_user=Depends(get_current_user)):
+    """Return all chat sessions for the authenticated user."""
+    user_id = str(current_user.id)
     try:
-        supabase.table("chats").delete().eq("id", chat_id).execute()
-        return {"message": "Chat deleted successfully."}
+        res = (
+            supabase.table("chats")
+            .select("id, title, created_at")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return res.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/chats/{chat_id}/messages")
-async def get_messages(chat_id: str):
+
+@app.delete("/api/chats/{chat_id}")
+async def delete_chat(chat_id: str, current_user=Depends(get_current_user)):
+    user_id = str(current_user.id)
     try:
-        res = supabase.table("messages").select("id, role, content, created_at").eq("chat_id", chat_id).order("created_at", desc=False).execute()
-        return res.data
+        # Verify ownership before deleting
+        check = supabase.table("chats").select("id").eq("id", chat_id).eq("user_id", user_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+        supabase.table("chats").delete().eq("id", chat_id).execute()
+        return {"message": "Chat deleted successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chats/{chat_id}/messages")
+async def get_messages(chat_id: str, current_user=Depends(get_current_user)):
+    user_id = str(current_user.id)
+    try:
+        # Verify ownership
+        check = supabase.table("chats").select("id").eq("id", chat_id).eq("user_id", user_id).execute()
+        if not check.data:
+            raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+        res = (
+            supabase.table("messages")
+            .select("id, role, content, created_at")
+            .eq("chat_id", chat_id)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        return res.data
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Auth Endpoints ────────────────────────────────────────────────────────────────
 
 @app.post("/api/auth/signup")
 async def signup(req: SignUpRequest):
-    # Validate scholar_id: exactly 7 digits
+    # EmailStr already validated by Pydantic; just validate the scholar_id format
     if not re.match(r"^\d{7}$", req.scholar_id):
         raise HTTPException(status_code=400, detail="Scholar ID must be exactly 7 digits.")
-    
-    # Simple email check
-    if not re.match(r"[^@]+@[^@]+\.[^@]+", req.email):
-        raise HTTPException(status_code=400, detail="Invalid email format.")
-
     try:
         res = supabase.auth.sign_up({
             "email": req.email,
             "password": req.password,
             "options": {
                 "data": {
-                    "name": req.name,
-                    "username": req.username,
-                    "scholar_id": req.scholar_id
+                    "name":       req.name,
+                    "username":   req.username,
+                    "scholar_id": req.scholar_id,
                 }
             }
         })
         if not res.user:
             raise HTTPException(status_code=400, detail="Signup failed.")
         return {"message": "Sign up successful! Please check your email for confirmation."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.post("/api/auth/login")
 async def login(req: LoginRequest):
     email = req.identifier
-    # Resolve username to email if it doesn't contain "@"
+    # Resolve username → email when no @ is present
     if "@" not in req.identifier:
         try:
             profile_res = supabase.table("profiles").select("email").eq("username", req.identifier).execute()
-            if not profile_res.data or len(profile_res.data) == 0:
+            if not profile_res.data:
                 raise HTTPException(status_code=400, detail="Username not found.")
             email = profile_res.data[0]["email"]
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Username resolution failed: {str(e)}")
-
     try:
-        res = supabase.auth.sign_in_with_password({
-            "email": email,
-            "password": req.password
-        })
-        
-        # Fetch public profile
+        res = supabase.auth.sign_in_with_password({"email": email, "password": req.password})
         profile_res = supabase.table("profiles").select("*").eq("id", res.user.id).execute()
         profile = profile_res.data[0] if profile_res.data else {}
-
         return {
             "session": {
-                "access_token": res.session.access_token,
+                "access_token":  res.session.access_token,
                 "refresh_token": res.session.refresh_token,
-                "expires_at": res.session.expires_at
+                "expires_at":    res.session.expires_at,
             },
             "user": {
-                "id": res.user.id,
-                "email": res.user.email,
-                "name": profile.get("name"),
-                "username": profile.get("username"),
-                "scholar_id": profile.get("scholar_id")
-            }
+                "id":         res.user.id,
+                "email":      res.user.email,
+                "name":       profile.get("name"),
+                "username":   profile.get("username"),
+                "scholar_id": profile.get("scholar_id"),
+            },
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.post("/api/auth/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest):
@@ -243,33 +336,32 @@ async def forgot_password(req: ForgotPasswordRequest):
     if "@" not in req.identifier:
         try:
             profile_res = supabase.table("profiles").select("email").eq("username", req.identifier).execute()
-            if not profile_res.data or len(profile_res.data) == 0:
+            if not profile_res.data:
                 raise HTTPException(status_code=400, detail="Username not found.")
             email = profile_res.data[0]["email"]
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Username resolution failed: {str(e)}")
-
     try:
-        FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        supabase.auth.reset_password_for_email(email, {
-            "redirect_to": FRONTEND_URL
-        })
+        FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        supabase.auth.reset_password_for_email(email, {"redirect_to": FRONTEND_URL})
         return {"message": "Password reset email sent. Please check your inbox."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
 
 @app.post("/api/auth/reset-password")
 async def reset_password(req: ResetPasswordRequest):
     try:
-        # Verify the access token and get the user from it
         user_response = supabase.auth.get_user(req.access_token)
         if not user_response or not user_response.user:
             raise HTTPException(status_code=401, detail="Invalid or expired reset token.")
-
-        # Use admin to update the user's password by their user ID
         supabase.auth.admin.update_user_by_id(
             user_response.user.id,
-            {"password": req.password}
+            {"password": req.password},
         )
         return {"message": "Password has been reset successfully."}
     except HTTPException:
@@ -277,33 +369,42 @@ async def reset_password(req: ResetPasswordRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# ── Admin Document Ingestion Pipeline ──────────────────────────────────────────
+
+# ── Admin Document Ingestion Pipeline ─────────────────────────────────────────────
 gemini_embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
 
-def _embed_with_retry(texts: List[str], max_retries: int = 5) -> List[List[float]]:
-    """Embed texts with exponential backoff on Gemini rate-limit errors."""
+
+async def _embed_with_retry(texts: List[str], max_retries: int = 5) -> List[List[float]]:
+    """
+    Embed a batch of texts with exponential backoff on Gemini rate-limit errors.
+    Uses asyncio.sleep (non-blocking) instead of time.sleep so the FastAPI event
+    loop is not frozen during the wait.
+    """
     for attempt in range(max_retries):
         try:
             return gemini_embeddings.embed_documents(texts)
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 wait = 15 * (2 ** attempt)
-                print(f"[Upload] Rate limit hit, waiting {wait}s...")
-                time.sleep(wait)
+                print(f"[Upload] Rate limit hit, waiting {wait}s (attempt {attempt + 1})...")
+                await asyncio.sleep(wait)   # ← was blocking time.sleep()
             else:
                 raise
     raise RuntimeError("Embedding failed after max retries.")
 
+
 @app.post("/api/admin/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    _admin=Depends(require_admin),
+):
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF documents are supported.")
-    
-    pdf_dir = Path("../data/pdfs")
+
+    pdf_dir   = Path("../data/pdfs")
     pdf_dir.mkdir(parents=True, exist_ok=True)
     file_path = pdf_dir / file.filename
 
-    # Save uploaded file
     try:
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -311,20 +412,20 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Failed to save uploaded file: {e}")
 
     try:
-        # ── Smart processing: auto-detects text vs tabular PDF ────────────────
+        # Smart processing: auto-detects text vs tabular PDF
         chunks = process_pdf(str(file_path), source_name=file.filename)
-
         if not chunks:
             raise HTTPException(status_code=400, detail="No readable content extracted from PDF.")
 
-        # ── Embed & upload in rate-limit-safe batches ─────────────────────────
-        BATCH_SIZE = 10
-        SLEEP_SECS = 7
+        # Embed & upload in rate-limit-safe batches
+        BATCH_SIZE    = 10
+        SLEEP_BETWEEN = 7      # seconds between batches (asyncio, non-blocking)
         total_uploaded = 0
+
         for i in range(0, len(chunks), BATCH_SIZE):
-            batch = chunks[i:i + BATCH_SIZE]
-            texts = [c["content"] for c in batch]
-            embeddings = _embed_with_retry(texts)
+            batch      = chunks[i:i + BATCH_SIZE]
+            texts      = [c["content"] for c in batch]
+            embeddings = await _embed_with_retry(texts)
             rows = [
                 {"content": c["content"], "metadata": c["metadata"], "embedding": emb}
                 for c, emb in zip(batch, embeddings)
@@ -332,42 +433,28 @@ async def upload_document(file: UploadFile = File(...)):
             supabase.table("documents").insert(rows).execute()
             total_uploaded += len(rows)
             if i + BATCH_SIZE < len(chunks):
-                time.sleep(SLEEP_SECS)
+                await asyncio.sleep(SLEEP_BETWEEN)
 
-        # Determine content type detected for the response
         detected_type = chunks[0]["metadata"].get("content_type", "text") if chunks else "text"
 
-        # ── AGENTIC LAYER: classify → extract → notify ─────────────────────
+        # ── Agentic layer: classify → extract → notify ──────────────────────────
         agent_result = {"notified": 0, "doc_type": "general", "skipped": False}
         try:
-            # Stage 1: Classify using ONLY first 300 chars of first chunk + filename
-            first_excerpt = chunks[0]["content"][:300] if chunks else ""
+            first_excerpt  = chunks[0]["content"][:300] if chunks else ""
             classification = classify_document(first_excerpt, file.filename)
-            doc_type = classification.get("doc_type", "general")
-            summary = classification.get("summary", file.filename)
-            is_targeted = classification.get("is_targeted", False)
+            doc_type       = classification.get("doc_type", "general")
+            summary        = classification.get("summary", file.filename)
             agent_result["doc_type"] = doc_type
 
-            print(f"[Agent] '{file.filename}' classified as: {doc_type} | targeted: {is_targeted}")
+            print(f"[Agent] '{file.filename}' classified as: {doc_type}")
 
             if doc_type in NOTIFY_TYPES:
-                # Stage 2: Regex extract scholar IDs from all chunks — zero LLM cost
-                all_texts = [c["content"] for c in chunks]
-                found_ids = extract_scholar_ids(all_texts)
+                all_texts    = [c["content"] for c in chunks]
+                found_ids    = extract_scholar_ids(all_texts)
                 is_broadcast = len(found_ids) == 0
+                notif        = craft_notification(doc_type, summary, is_broadcast)
+                users        = get_all_students(supabase) if is_broadcast else resolve_scholar_ids(found_ids, supabase)
 
-                print(f"[Agent] Scholar IDs found via regex: {found_ids or 'none (broadcast)'}") 
-
-                # Stage 3: Single LLM call with minimal context to craft notification
-                notif = craft_notification(doc_type, summary, is_broadcast)
-
-                # Resolve users
-                if is_broadcast:
-                    users = get_all_students(supabase)
-                else:
-                    users = resolve_scholar_ids(found_ids, supabase)
-
-                # Save notice record
                 notice_insert = supabase.table("notices").insert({
                     "title":          file.filename,
                     "content":        summary,
@@ -380,11 +467,8 @@ async def upload_document(file: UploadFile = File(...)):
                 }).execute()
                 notice_id = notice_insert.data[0]["id"]
 
-                # Dispatch notifications
                 sent = dispatch_notifications(
-                    notice_id, users,
-                    notif["title"], notif["message_template"],
-                    supabase
+                    notice_id, users, notif["title"], notif["message_template"], supabase
                 )
                 agent_result["notified"] = sent
                 print(f"[Agent] Notifications dispatched: {sent}")
@@ -397,83 +481,67 @@ async def upload_document(file: UploadFile = File(...)):
             print(f"[Agent] Pipeline error (non-fatal): {agent_err}")
 
         return {
-            "message": f"Successfully ingested '{file.filename}'!",
+            "message":               f"Successfully ingested '{file.filename}'!",
             "content_type_detected": detected_type,
-            "chunks_created": total_uploaded,
+            "chunks_created":        total_uploaded,
             "agent": {
-                "doc_type":         agent_result["doc_type"],
-                "notifications_sent": agent_result["notified"],
+                "doc_type":             agent_result["doc_type"],
+                "notifications_sent":   agent_result["notified"],
                 "notification_skipped": agent_result["skipped"],
-            }
+            },
         }
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
 
+
 @app.get("/api/admin/documents")
-async def list_documents():
+async def list_documents(_admin=Depends(require_admin)):
     try:
-        res = supabase.table("documents").select("metadata").execute()
-        docs = {}
+        res  = supabase.table("documents").select("metadata").execute()
+        docs: dict = {}
         for row in (res.data or []):
             meta = row.get("metadata") or {}
-            src = meta.get("source")
+            src  = meta.get("source")
             if src:
                 filename = Path(src).name
                 docs[filename] = docs.get(filename, 0) + 1
-        
-        doc_list = [{"filename": k, "chunks": v} for k, v in sorted(docs.items())]
-        return doc_list
+        return [{"filename": k, "chunks": v} for k, v in sorted(docs.items())]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/api/admin/documents/{filename}")
-async def delete_document(filename: str):
-    try:
-        supabase.table("documents").delete().like("metadata->>source", f"%{filename}").execute()
 
+@app.delete("/api/admin/documents/{filename}")
+async def delete_document(filename: str, _admin=Depends(require_admin)):
+    try:
+        supabase.table("documents").delete().like("metadata->source", f"%{filename}").execute()
         file_path = Path("../data/pdfs") / filename
         if file_path.exists():
             file_path.unlink()
-
         return {"message": f"Deleted document '{filename}' successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Workflow B: Admin Text Notice ───────────────────────────────────────────────
+# ── Workflow B: Admin Text Notice ─────────────────────────────────────────────────
 
 @app.post("/api/admin/notices")
-async def post_notice(req: NoticeRequest):
-    """Admin posts a text notice. Agent extracts scholar IDs, dispatches notifications,
-    and ingests notice into RAG documents table."""
+async def post_notice(req: NoticeRequest, _admin=Depends(require_admin)):
+    """Admin posts a text notice. Agent classifies, dispatches notifications,
+    and ingests the notice into the RAG documents table."""
     if not req.title.strip() or not req.content.strip():
         raise HTTPException(status_code=400, detail="Title and content are required.")
-
     try:
-        # Stage 1: Single LLM call on full notice text (it's short, so this is fine)
-        from notice_agent import classify_document, extract_scholar_ids, craft_notification
         classification = classify_document(req.content[:600], req.title)
-        doc_type = classification.get("doc_type", "student_notice")
-        summary  = classification.get("summary", req.title)
-
-        # Stage 2: Regex extract scholar IDs from notice content
-        found_ids = extract_scholar_ids([req.content])
+        doc_type     = classification.get("doc_type", "student_notice")
+        summary      = classification.get("summary", req.title)
+        found_ids    = extract_scholar_ids([req.content])
         is_broadcast = len(found_ids) == 0
-
-        # Stage 3: Craft notification
-        notif = craft_notification(doc_type, summary, is_broadcast)
-
-        # Resolve users
-        if is_broadcast:
-            users = get_all_students(supabase)
-        else:
-            users = resolve_scholar_ids(found_ids, supabase)
-
+        notif        = craft_notification(doc_type, summary, is_broadcast)
+        users        = get_all_students(supabase) if is_broadcast else resolve_scholar_ids(found_ids, supabase)
         not_found_ids = [sid for sid in found_ids if sid not in {u["scholar_id"] for u in users}]
 
-        # Persist notice
         notice_insert = supabase.table("notices").insert({
             "title":          req.title,
             "content":        req.content,
@@ -485,17 +553,12 @@ async def post_notice(req: NoticeRequest):
         }).execute()
         notice_id = notice_insert.data[0]["id"]
 
-        # Dispatch in-app notifications
-        sent = dispatch_notifications(
-            notice_id, users,
-            notif["title"], notif["message_template"],
-            supabase
-        )
+        sent = dispatch_notifications(notice_id, users, notif["title"], notif["message_template"], supabase)
 
-        # ── RAG Ingestion: chunk + embed notice into documents table ──────────
-        rag_chunks = chunk_notice_text(req.title, req.content, notice_id, doc_type)
-        rag_texts = [c["content"] for c in rag_chunks]
-        rag_embeddings = _embed_with_retry(rag_texts)
+        # RAG ingestion
+        rag_chunks     = chunk_notice_text(req.title, req.content, notice_id, doc_type)
+        rag_texts      = [c["content"] for c in rag_chunks]
+        rag_embeddings = await _embed_with_retry(rag_texts)
         rag_rows = [
             {"content": c["content"], "metadata": c["metadata"], "embedding": emb}
             for c, emb in zip(rag_chunks, rag_embeddings)
@@ -503,22 +566,24 @@ async def post_notice(req: NoticeRequest):
         supabase.table("documents").insert(rag_rows).execute()
 
         return {
-            "message":         "Notice posted and notifications dispatched.",
-            "notice_id":       notice_id,
-            "notice_type":     doc_type,
-            "icon":            NOTICE_ICONS.get(doc_type, "📄"),
-            "is_broadcast":    is_broadcast,
-            "students_notified": sent,
-            "scholar_ids_found": found_ids,
+            "message":               "Notice posted and notifications dispatched.",
+            "notice_id":             notice_id,
+            "notice_type":           doc_type,
+            "icon":                  NOTICE_ICONS.get(doc_type, "📄"),
+            "is_broadcast":          is_broadcast,
+            "students_notified":     sent,
+            "scholar_ids_found":     found_ids,
             "scholar_ids_not_found": not_found_ids,
-            "rag_chunks_indexed": len(rag_rows),
+            "rag_chunks_indexed":    len(rag_rows),
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Notice pipeline failed: {str(e)}")
 
 
 @app.get("/api/admin/notices-list")
-async def list_notices():
+async def list_notices(_admin=Depends(require_admin)):
     """Return all notices for the admin panel."""
     try:
         res = supabase.table("notices").select("*").order("created_at", desc=True).limit(50).execute()
@@ -527,13 +592,12 @@ async def list_notices():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── User Notification Endpoints ────────────────────────────────────────────────
+# ── User Notification Endpoints ───────────────────────────────────────────────────
 
 @app.get("/api/notifications")
-async def get_notifications(user_id: str):
-    """Fetch all notifications for a specific user (newest first)."""
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
+async def get_notifications(current_user=Depends(get_current_user)):
+    """Fetch all notifications for the authenticated user (newest first)."""
+    user_id = str(current_user.id)
     try:
         res = (
             supabase.table("user_notifications")
@@ -543,36 +607,46 @@ async def get_notifications(user_id: str):
             .limit(50)
             .execute()
         )
-        # Enrich with notice type for icon display
         notifications = res.data or []
         if notifications:
             notice_ids = list({n["notice_id"] for n in notifications if n["notice_id"]})
             notice_res = supabase.table("notices").select("id, notice_type").in_("id", notice_ids).execute()
-            type_map = {n["id"]: n["notice_type"] for n in (notice_res.data or [])}
+            type_map   = {n["id"]: n["notice_type"] for n in (notice_res.data or [])}
             for notif in notifications:
                 ntype = type_map.get(notif["notice_id"], "general")
                 notif["notice_type"] = ntype
-                notif["icon"] = NOTICE_ICONS.get(ntype, "📄")
+                notif["icon"]        = NOTICE_ICONS.get(ntype, "📄")
         return notifications
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.patch("/api/notifications/{notif_id}/read")
-async def mark_notification_read(notif_id: str):
-    """Mark a single notification as read."""
+async def mark_notification_read(notif_id: str, current_user=Depends(get_current_user)):
+    """Mark a single notification as read (ownership verified)."""
+    user_id = str(current_user.id)
     try:
+        check = (
+            supabase.table("user_notifications")
+            .select("id")
+            .eq("id", notif_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not check.data:
+            raise HTTPException(status_code=403, detail="Notification not found or access denied.")
         supabase.table("user_notifications").update({"is_read": True}).eq("id", notif_id).execute()
         return {"message": "Notification marked as read."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.patch("/api/notifications/read-all")
-async def mark_all_notifications_read(user_id: str):
-    """Mark all notifications as read for a user."""
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
+async def mark_all_notifications_read(current_user=Depends(get_current_user)):
+    """Mark all notifications as read for the authenticated user."""
+    user_id = str(current_user.id)
     try:
         supabase.table("user_notifications").update({"is_read": True}).eq("user_id", user_id).eq("is_read", False).execute()
         return {"message": "All notifications marked as read."}
@@ -580,41 +654,34 @@ async def mark_all_notifications_read(user_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
-
-# ── Complaint Management Endpoints ─────────────────────────────────────────────
+# ── Complaint Management Endpoints ────────────────────────────────────────────────
 
 @app.post("/api/complaint/classify")
-async def complaint_classify(req: ComplaintClassifyRequest):
+async def complaint_classify(
+    req: ComplaintClassifyRequest,
+    current_user=Depends(get_current_user_optional),
+):
     """
-    Fast classification-only endpoint — used fire-and-forget from the frontend
-    in parallel with /api/chat.  No DB writes, no enrichment.
-    Returns {is_complaint, category, title, confidence} within ~300ms.
+    Fast classification-only endpoint — fire-and-forget from frontend.
+    No DB writes. Returns {is_complaint, category, title, confidence} in ~300ms.
     """
     try:
-        result = classify_complaint(req.text)
-        return result
-    except Exception as e:
-        # Never propagate errors — frontend ignores failures silently
+        return classify_complaint(req.text)
+    except Exception:
         return {"is_complaint": False, "category": "not_complaint", "title": "", "confidence": 0.0}
 
 
 @app.post("/api/complaint")
-async def submit_complaint(req: ComplaintRequest):
-    """
-    Full complaint submission: classify → similar → hostel enrich → save.
-    Only fires when user explicitly clicks 'Submit Complaint'.
-    """
+async def submit_complaint(req: ComplaintRequest, current_user=Depends(get_current_user)):
+    """Full complaint submission: classify → similar → hostel enrich → save."""
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="Complaint text is required.")
-    if not req.user_info or not req.user_info.get("id"):
-        raise HTTPException(status_code=401, detail="You must be logged in to submit a complaint.")
+    user_id   = str(current_user.id)
+    user_info = await _fetch_profile(user_id)
     try:
         result = process_complaint(
             text=req.text,
-            user_info=req.user_info,
+            user_info=user_info,
             supabase=supabase,
             hostel_id=req.hostel_id,
             room_number=req.room_number,
@@ -629,15 +696,15 @@ async def submit_complaint(req: ComplaintRequest):
 
 
 @app.post("/api/complaint/{complaint_id}/vote")
-async def vote_complaint(complaint_id: str, req: ComplaintClassifyRequest):
+async def vote_complaint(complaint_id: str, current_user=Depends(get_current_user)):
     """
-    Student agrees with / has the same issue as an existing complaint.
-    Increments vote_count, records in complaint_votes for deduplication.
+    Vote on an existing complaint (upvote / 'I have the same issue').
+    Records in complaint_votes for deduplication.
     """
-    if not req.user_info or not req.user_info.get("id"):
-        raise HTTPException(status_code=401, detail="You must be logged in to vote.")
+    user_id   = str(current_user.id)
+    user_info = await _fetch_profile(user_id)
     try:
-        result = vote_on_complaint(complaint_id, req.user_info, supabase)
+        result = vote_on_complaint(complaint_id, user_info, supabase)
         if result.get("error") == "already_voted":
             raise HTTPException(status_code=409, detail=result["message"])
         return result
@@ -648,10 +715,9 @@ async def vote_complaint(complaint_id: str, req: ComplaintClassifyRequest):
 
 
 @app.get("/api/my-complaints")
-async def get_my_complaints(user_id: str):
-    """Return all complaints submitted by a specific student, newest first."""
-    if not user_id:
-        raise HTTPException(status_code=400, detail="user_id is required")
+async def get_my_complaints(current_user=Depends(get_current_user)):
+    """Return all complaints submitted by the authenticated student."""
+    user_id = str(current_user.id)
     try:
         res = (
             supabase.table("complaints")
@@ -678,11 +744,9 @@ async def list_complaints(
     status: Optional[str] = None,
     category: Optional[str] = None,
     limit: int = 50,
+    _admin=Depends(require_admin),
 ):
-    """
-    Admin endpoint: all complaints, filterable by status and category.
-    Returns complaints with enriched icon labels.
-    """
+    """Admin endpoint: all complaints, filterable by status and category."""
     try:
         query = (
             supabase.table("complaints")
@@ -696,28 +760,26 @@ async def list_complaints(
         if category:
             query = query.eq("category", category)
 
-        res = query.execute()
+        res        = query.execute()
         complaints = res.data or []
-
-        # Enrich each complaint with icon/label metadata
         for c in complaints:
             cat  = c.get("category", "general")
             stat = c.get("status", "open")
-            c["category_icon"]  = CATEGORY_ICONS.get(cat, "📢")
-            c["status_icon"]    = STATUS_LABELS.get(stat, ("🔴", "Open"))[0]
-            c["status_label"]   = STATUS_LABELS.get(stat, ("🔴", "Open"))[1]
-
+            c["category_icon"] = CATEGORY_ICONS.get(cat, "📢")
+            c["status_icon"]   = STATUS_LABELS.get(stat, ("🔴", "Open"))[0]
+            c["status_label"]  = STATUS_LABELS.get(stat, ("🔴", "Open"))[1]
         return complaints
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.patch("/api/admin/complaints/{complaint_id}/status")
-async def update_complaint_status(complaint_id: str, req: ComplaintStatusRequest):
-    """
-    Admin action: update a complaint's status.
-    Valid values: open | in_progress | resolved | dismissed
-    """
+async def update_complaint_status(
+    complaint_id: str,
+    req: ComplaintStatusRequest,
+    _admin=Depends(require_admin),
+):
+    """Admin action: update a complaint's status."""
     valid = {"open", "in_progress", "resolved", "dismissed"}
     if req.status not in valid:
         raise HTTPException(status_code=400, detail=f"Status must be one of: {', '.join(valid)}")
@@ -737,23 +799,21 @@ async def update_complaint_status(complaint_id: str, req: ComplaintStatusRequest
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Telegram Webhooks (public — called directly by Telegram servers) ──────────────
+
 @app.post("/api/telegram/webhook")
 async def telegram_webhook(
     background_tasks: BackgroundTasks,
-    update: dict = Body(...)
+    update: dict = Body(...),
 ):
-    """
-    Telegram sends every message here via HTTPS POST.
-    We return 200 immediately (required by Telegram protocol),
-    and process the update in a background task so latency is ~0ms.
-    """
+    """Student bot webhook — returns 200 immediately; processing in background."""
     background_tasks.add_task(handle_update, update, supabase)
     return {"ok": True}
 
 
 @app.get("/api/hostels")
 async def list_hostels():
-    """Return all hostels for the frontend dropdown."""
+    """Return all hostels for the frontend dropdown (public endpoint)."""
     try:
         res = supabase.table("hostels").select("id, name, code").order("code").execute()
         return res.data or []
@@ -764,11 +824,12 @@ async def list_hostels():
 @app.post("/api/staff/telegram/webhook")
 async def staff_telegram_webhook(
     background_tasks: BackgroundTasks,
-    update: dict = Body(...)
+    update: dict = Body(...),
 ):
-    """
-    Staff bot webhook — Telegram sends updates for the staff bot here.
-    Returns 200 immediately; processing happens in background.
-    """
+    """Staff bot webhook — returns 200 immediately; processing in background."""
     background_tasks.add_task(handle_staff_update, update, supabase)
     return {"ok": True}
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)

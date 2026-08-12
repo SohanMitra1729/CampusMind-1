@@ -7,6 +7,16 @@ import { Badge } from './components/ui/Badge';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
+// Returns the Authorization header using the JWT stored from login
+const getAuthHeaders = () => {
+  try {
+    const session = JSON.parse(localStorage.getItem('campusmind_session') || '{}');
+    return { Authorization: `Bearer ${session.access_token || ''}` };
+  } catch {
+    return {};
+  }
+};
+
 export default function Chat({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -43,7 +53,9 @@ export default function Chat({ user, onLogout }) {
   const fetchNotifications = async () => {
     if (!user?.id) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/api/notifications?user_id=${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/notifications`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setNotifications(data.map(n => ({
@@ -103,7 +115,10 @@ export default function Chat({ user, onLogout }) {
   const markAllRead = async () => {
     setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
     try {
-      await fetch(`${API_BASE_URL}/api/notifications/read-all?user_id=${user.id}`, { method: 'PATCH' });
+      await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
+        method: 'PATCH',
+        headers: getAuthHeaders(),
+      });
     } catch (e) {
       console.error('Failed to mark all read', e);
     }
@@ -115,7 +130,10 @@ export default function Chat({ user, onLogout }) {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, unread: !n.unread } : n));
     if (notif.unread) {
       try {
-        await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, { method: 'PATCH' });
+        await fetch(`${API_BASE_URL}/api/notifications/${id}/read`, {
+          method: 'PATCH',
+          headers: getAuthHeaders(),
+        });
       } catch (e) {}
     }
   };
@@ -139,7 +157,9 @@ export default function Chat({ user, onLogout }) {
 
   const fetchChats = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/chats?user_id=${user.id}`);
+      const response = await fetch(`${API_BASE_URL}/api/chats`, {
+        headers: getAuthHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         setChatSessions(data);
@@ -153,7 +173,9 @@ export default function Chat({ user, onLogout }) {
     if (!user?.id) return;
     setMyComplaintsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/my-complaints?user_id=${user.id}`);
+      const res = await fetch(`${API_BASE_URL}/api/my-complaints`, {
+        headers: getAuthHeaders(),
+      });
       if (res.ok) setMyComplaints(await res.json());
     } catch (e) {
       console.error('Failed to fetch my complaints', e);
@@ -167,7 +189,9 @@ export default function Chat({ user, onLogout }) {
     setMessages([]);
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}/messages`);
+      const response = await fetch(`${API_BASE_URL}/api/chats/${chatId}/messages`, {
+        headers: getAuthHeaders(),
+      });
       if (response.ok) {
         const data = await response.json();
         setMessages(data);
@@ -189,7 +213,10 @@ export default function Chat({ user, onLogout }) {
     if (!window.confirm("Are you sure you want to delete this conversation?")) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/api/chats/${chatId}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders(),
+      });
       if (res.ok) {
         setChatSessions((prev) => prev.filter((c) => c.id !== chatId));
         if (activeChatId === chatId) {
@@ -222,8 +249,8 @@ export default function Chat({ user, onLogout }) {
     if (user?.id) {
       fetch(`${API_BASE_URL}/api/complaint/classify`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: inputText, user_info: user }),
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: inputText }),  // user_info removed — derived from JWT on backend
       })
         .then(r => r.ok ? r.json() : null)
         .then(data => {
@@ -243,7 +270,7 @@ export default function Chat({ user, onLogout }) {
       const payload = {
         query: inputText,
         metadata_filter,
-        user_info: user,
+        // user_info removed — the backend fetches the profile from the verified JWT
       };
       if (activeChatId) {
         payload.chat_id = activeChatId;
@@ -251,7 +278,7 @@ export default function Chat({ user, onLogout }) {
 
       const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
@@ -297,10 +324,10 @@ export default function Chat({ user, onLogout }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/complaint`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: complaintPending.text,
-          user_info: user,
+          // user_info removed — derived from JWT on backend
           hostel_id: selectedHostelId,
           room_number: complaintPending.needsRoom && roomNumber.trim() ? roomNumber.trim() : null,
         }),
@@ -323,8 +350,8 @@ export default function Chat({ user, onLogout }) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/complaint/${complaintId}/vote`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: '', user_info: user }),
+        headers: getAuthHeaders(),
+        // No body needed — user identity comes from the JWT
       });
       if (res.ok) {
         setVotedComplaints(prev => new Set([...prev, complaintId]));

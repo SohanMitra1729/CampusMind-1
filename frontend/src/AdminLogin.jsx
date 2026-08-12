@@ -4,8 +4,7 @@ import { Button } from './components/ui/Button';
 import { Input } from './components/ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/Card';
 
-const ADMIN_USERNAME = 'admin';
-const ADMIN_PASSWORD = 'admin123';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export default function AdminLogin({ onAdminSuccess }) {
   const [username, setUsername] = useState('');
@@ -14,22 +13,33 @@ export default function AdminLogin({ onAdminSuccess }) {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    // Simulate a brief delay for UX polish
-    setTimeout(() => {
-      if (username.trim() === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-        // Store admin session in sessionStorage (cleared on browser close)
-        sessionStorage.setItem('campusmind_admin', 'true');
-        onAdminSuccess();
-      } else {
-        setError('Invalid admin credentials. Access denied.');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/admin/auth`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Invalid admin credentials. Access denied.');
       }
+
+      const { token } = await res.json();
+      // Store both the flag (for session restore detection) and the actual token
+      sessionStorage.setItem('campusmind_admin', 'true');
+      sessionStorage.setItem('campusmind_admin_token', token);
+      onAdminSuccess(token);
+    } catch (err) {
+      setError(err.message);
+    } finally {
       setIsLoading(false);
-    }, 600);
+    }
   };
 
   return (
