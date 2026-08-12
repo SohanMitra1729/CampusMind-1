@@ -128,9 +128,12 @@ Examples:
         }
 
 
+import app.repositories.document_repository as doc_repo
+
+
 # ── Stage 2: Hostel enrichment ────────────────────────────────────────────────
 
-def enrich_hostel_details(scholar_id: str, supabase) -> dict:
+def enrich_hostel_details(scholar_id: str) -> dict:
     """
     Query the RAG documents table for the student's hostel allotment chunk.
     Works because hostel allotment PDFs are ingested with metadata.regn_no set.
@@ -139,65 +142,38 @@ def enrich_hostel_details(scholar_id: str, supabase) -> dict:
     """
     if not scholar_id:
         return {}
-    try:
-        res = (
-            supabase.table("documents")
-            .select("content, metadata")
-            .eq("metadata->>regn_no", scholar_id)
-            .limit(1)
-            .execute()
-        )
-        if not res.data:
-            # Try a looser search
-            res = (
-                supabase.table("documents")
-                .select("content, metadata")
-                .like("content", f"%{scholar_id}%")
-                .in_("metadata->>content_type", ["tabular", "ocr_tabular"])
-                .limit(1)
-                .execute()
-            )
-        if not res.data:
-            return {}
-
-        chunk_text = res.data[0].get("content", "")
-        meta = res.data[0].get("metadata", {})
-
-        # Parse the NL sentence format: "Header1: val | Header2: val | ..."
-        details = {"raw_chunk": chunk_text, "source_doc": meta.get("source", "")}
-        for pair in chunk_text.split("|"):
-            pair = pair.strip()
-            if ":" in pair:
-                k, v = pair.split(":", 1)
-                key = k.strip().lower().replace(" ", "_").replace(".", "")
-                details[key] = v.strip()
-
-        print(f"[ComplaintAgent] Hostel details for {scholar_id}: {list(details.keys())}")
-        return details
-
-    except Exception as e:
-        print(f"[ComplaintAgent] enrich_hostel error: {e}")
+    chunk = doc_repo.find_hostel_allotment_chunk(scholar_id)
+    if not chunk:
         return {}
+
+    chunk_text = chunk.get("content", "")
+    meta       = chunk.get("metadata", {})
+
+    details = {"raw_chunk": chunk_text, "source_doc": meta.get("source", "")}
+    for pair in chunk_text.split("|"):
+        pair = pair.strip()
+        if ":" in pair:
+            k, v = pair.split(":", 1)
+            key  = k.strip().lower().replace(" ", "_").replace(".", "")
+            details[key] = v.strip()
+
+    print(f"[ComplaintAgent] Hostel details for {scholar_id}: {list(details.keys())}")
+    return details
+
+
+import app.repositories.complaint_repository as complaint_repo
 
 
 # ── Stage 3: Similar complaint search ────────────────────────────────────────
 
-def find_similar_complaints(complaint_text: str, complaint_title: str, category: str, supabase) -> List[dict]:
+def find_similar_complaints(complaint_text: str, complaint_title: str, category: str) -> List[dict]:
     """
     Find existing open complaints similar to the new one.
     Uses keyword overlap on title + same category filter.
     Returns list of {id, title, vote_count, description, similarity}.
     """
     try:
-        query = (
-            supabase.table("complaints")
-            .select("id, title, vote_count, description, category, status")
-            .eq("status", "open")
-            .order("vote_count", desc=True)
-            .limit(30)
-            .execute()
-        )
-        complaints = query.data or []
+        complaints = complaint_repo.get_open_complaints_for_similarity(limit=30)
 
         # Word-overlap similarity between new complaint and existing titles+descriptions
         input_words = set(re.findall(r"\b\w{3,}\b", (complaint_text + " " + complaint_title).lower()))
@@ -238,9 +214,8 @@ def find_similar_complaints(complaint_text: str, complaint_title: str, category:
 def process_complaint(
     text: str,
     user_info: dict,
-    supabase,
-    hostel_id: str = None,
-    room_number: str = None,
+    hostel_id: Optional[str] = None,
+    room_number: Optional[str] = None,
 ) -> dict:
     """
     Full agentic complaint pipeline:
@@ -249,15 +224,6 @@ def process_complaint(
       3. Enrich    (DB hostel lookup — only if hostel category)
       4. Save      (Supabase insert)
       5. Forward   (staff_bot — route to matching staff)
-
-    Returns:
-        {
-            "complaint":       dict,   # saved complaint row
-            "similar":         list,   # similar open complaints
-            "hostel_details":  dict,
-            "category":        str,
-            "title":           str,
-        }
     """
     user_id    = user_info.get("id")
     scholar_id = user_info.get("scholar_id") or ""
@@ -276,13 +242,13 @@ def process_complaint(
     staff_role = classification.get("staff_role")  # LLM-determined, e.g. "electrical"
 
     # ── Stage 2: Similar complaints ────────────────────────────────────────────
-    similar = find_similar_complaints(text, title, category, supabase)
+    similar = find_similar_complaints(text, title, category)
     print(f"[ComplaintAgent] Found {len(similar)} similar complaint(s)")
 
     # ── Stage 3: Hostel enrichment ─────────────────────────────────────────────
     hostel_details: dict = {}
     if category == "hostel":
-        hostel_details = enrich_hostel_details(scholar_id, supabase)
+        hostel_details = enrich_hostel_details(scholar_id)
 
     # ── Stage 4: Persist complaint ─────────────────────────────────────────────
     insert_data = {
@@ -299,20 +265,12 @@ def process_complaint(
         "room_number":    room_number or None,
     }
 
-    res = supabase.table("complaints").insert(insert_data).execute()
-    complaint_row = res.data[0] if res.data else insert_data
+    complaint_row = complaint_repo.create_complaint(insert_data)
     complaint_id  = complaint_row.get("id")
 
     # Record that this user is the first "voter" on their own complaint
     if complaint_id and user_id:
-        try:
-            supabase.table("complaint_votes").insert({
-                "complaint_id": complaint_id,
-                "user_id":      user_id,
-                "scholar_id":   scholar_id or None,
-            }).execute()
-        except Exception:
-            pass  # unique constraint may already exist — fine
+        complaint_repo.record_vote(complaint_id, user_id, scholar_id)
 
     print(f"[ComplaintAgent] Complaint saved: '{title}' [{category}] id={complaint_id}")
 
@@ -323,12 +281,9 @@ def process_complaint(
             # Look up hostel name if hostel_id supplied
             hostel_name = "Unknown Hostel"
             if hostel_id:
-                try:
-                    h_res = supabase.table("hostels").select("name").eq("id", hostel_id).single().execute()
-                    if h_res.data:
-                        hostel_name = h_res.data.get("name", hostel_name)
-                except Exception:
-                    pass
+                hostel = complaint_repo.get_hostel_by_id(hostel_id)
+                if hostel:
+                    hostel_name = hostel.get("name", hostel_name)
             send_complaint_to_staff(
                 complaint_id=complaint_id,
                 title=title,
@@ -339,7 +294,6 @@ def process_complaint(
                 hostel_name=hostel_name,
                 room_number=room_number,
                 student_name=name,
-                supabase=supabase,
             )
         except Exception as fwd_err:
             print(f"[ComplaintAgent] Staff forwarding error (non-fatal): {fwd_err}")
@@ -355,50 +309,25 @@ def process_complaint(
 
 # ── Vote on an existing complaint ─────────────────────────────────────────────
 
-def vote_on_complaint(complaint_id: str, user_info: dict, supabase) -> dict:
+def vote_on_complaint(complaint_id: str, user_info: dict) -> dict:
     """
     Record that a student agrees with / has the same issue as an existing complaint.
-    Increments vote_count atomically (fetch → increment → update).
+    Increments vote_count atomically.
     Returns updated complaint or raises if vote already cast.
     """
     user_id    = user_info.get("id")
     scholar_id = user_info.get("scholar_id") or ""
 
-    # Check if already voted
-    existing = (
-        supabase.table("complaint_votes")
-        .select("id")
-        .eq("complaint_id", complaint_id)
-        .eq("user_id", user_id)
-        .execute()
-    )
-    if existing.data:
+    if complaint_repo.has_user_voted(complaint_id, user_id):
         return {"error": "already_voted", "message": "You have already voted on this complaint."}
 
     # Insert vote record
-    supabase.table("complaint_votes").insert({
-        "complaint_id": complaint_id,
-        "user_id":      user_id,
-        "scholar_id":   scholar_id or None,
-    }).execute()
+    complaint_repo.record_vote(complaint_id, user_id, scholar_id)
 
     # Increment vote_count
-    current = (
-        supabase.table("complaints")
-        .select("vote_count")
-        .eq("id", complaint_id)
-        .execute()
-    )
-    current_count = current.data[0]["vote_count"] if current.data else 0
-    updated = (
-        supabase.table("complaints")
-        .update({"vote_count": current_count + 1})
-        .eq("id", complaint_id)
-        .execute()
-    )
-    print(f"[ComplaintAgent] Vote recorded on {complaint_id}: count now {current_count + 1}")
+    new_count = complaint_repo.increment_vote_count(complaint_id)
+    print(f"[ComplaintAgent] Vote recorded on {complaint_id}: count now {new_count}")
     return {
-        "message":    "Vote recorded.",
-        "vote_count": current_count + 1,
-        "complaint":  updated.data[0] if updated.data else {},
+        "message":    "Vote recorded successfully.",
+        "vote_count": new_count,
     }

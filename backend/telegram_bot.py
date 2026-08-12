@@ -40,7 +40,10 @@ def send_telegram_push(chat_id: str, title: str, message: str, icon: str = "📢
     send_message(chat_id, text)
 
 
-def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase):
+import app.repositories.user_repository as user_repo
+
+
+def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
     """
     1. Strip/validate 7-digit scholar ID from user text
     2. Query profiles WHERE scholar_id = ?
@@ -54,15 +57,14 @@ def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase):
         return
 
     try:
-        # Check if scholar ID exists
-        res = supabase.table("profiles").select("id, name, telegram_chat_id").eq("scholar_id", scholar_id).execute()
-        if not res.data:
+        profile = user_repo.get_profile_by_scholar_id(scholar_id)
+        if not profile:
             send_message(chat_id, f"❌ Scholar ID {scholar_id} not found in our records. Please try again or contact administration.")
             return
 
-        user_id = res.data[0]["id"]
-        name = res.data[0]["name"]
-        existing_chat = res.data[0].get("telegram_chat_id")
+        user_id = profile["id"]
+        name = profile["name"]
+        existing_chat = profile.get("telegram_chat_id")
 
         if existing_chat and existing_chat != str(chat_id):
              send_message(chat_id, f"⚠️ This Scholar ID is already linked to another Telegram account.")
@@ -70,7 +72,7 @@ def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase):
              return
 
         # Link it
-        supabase.table("profiles").update({"telegram_chat_id": str(chat_id)}).eq("id", user_id).execute()
+        user_repo.link_telegram_chat_id(user_id, chat_id)
         
         _bot_state[chat_id] = None # Clear state
         
@@ -230,9 +232,7 @@ def handle_update(update: dict, supabase):
     # Check for linked account
     user_info = None
     try:
-        res = supabase.table("profiles").select("*").eq("telegram_chat_id", chat_id).execute()
-        if res.data:
-            user_info = res.data[0]
+        user_info = user_repo.get_profile_by_telegram_chat_id(chat_id)
     except Exception as e:
         print(f"[TelegramBot] User lookup error: {e}")
 

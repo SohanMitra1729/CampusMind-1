@@ -73,6 +73,10 @@ from app.schemas.complaint import (
 )
 from app.schemas.notice import NoticeRequest
 import app.repositories.chat_repository as chat_repo
+import app.repositories.user_repository as user_repo
+import app.repositories.complaint_repository as complaint_repo
+import app.repositories.notice_repository as notice_repo
+import app.repositories.document_repository as doc_repo
 
 
 # ── Internal helper: fetch full profile by verified user_id ──────────────────────
@@ -83,11 +87,8 @@ async def _fetch_profile(user_id: str) -> Dict[str, Any]:
     Returns at minimum {"id": user_id} if the profile is missing.
     Never raises — callers should handle missing fields gracefully.
     """
-    try:
-        res = supabase.table("profiles").select("*").eq("id", user_id).single().execute()
-        return res.data or {"id": user_id}
-    except Exception:
-        return {"id": user_id}
+    profile = user_repo.get_profile_by_id(user_id)
+    return profile or {"id": user_id}
 
 
 # ── Admin Authentication ──────────────────────────────────────────────────────────
@@ -203,19 +204,13 @@ async def login(req: LoginRequest):
     email = req.identifier
     # Resolve username → email when no @ is present
     if "@" not in req.identifier:
-        try:
-            profile_res = supabase.table("profiles").select("email").eq("username", req.identifier).execute()
-            if not profile_res.data:
-                raise HTTPException(status_code=400, detail="Username not found.")
-            email = profile_res.data[0]["email"]
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Username resolution failed: {str(e)}")
+        resolved = user_repo.get_email_by_username(req.identifier)
+        if not resolved:
+            raise HTTPException(status_code=400, detail="Username not found.")
+        email = resolved
     try:
         res = supabase.auth.sign_in_with_password({"email": email, "password": req.password})
-        profile_res = supabase.table("profiles").select("*").eq("id", res.user.id).execute()
-        profile = profile_res.data[0] if profile_res.data else {}
+        profile = user_repo.get_profile_by_id(res.user.id) or {}
         return {
             "session": {
                 "access_token":  res.session.access_token,
@@ -240,17 +235,12 @@ async def login(req: LoginRequest):
 async def forgot_password(req: ForgotPasswordRequest):
     email = req.identifier
     if "@" not in req.identifier:
-        try:
-            profile_res = supabase.table("profiles").select("email").eq("username", req.identifier).execute()
-            if not profile_res.data:
-                raise HTTPException(status_code=400, detail="Username not found.")
-            email = profile_res.data[0]["email"]
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Username resolution failed: {str(e)}")
+        resolved = user_repo.get_email_by_username(req.identifier)
+        if not resolved:
+            raise HTTPException(status_code=400, detail="Username not found.")
+        email = resolved
     try:
-        FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        FRONTEND_URL = settings.FRONTEND_URL
         supabase.auth.reset_password_for_email(email, {"redirect_to": FRONTEND_URL})
         return {"message": "Password reset email sent. Please check your inbox."}
     except HTTPException:
@@ -336,7 +326,7 @@ async def upload_document(
                 {"content": c["content"], "metadata": c["metadata"], "embedding": emb}
                 for c, emb in zip(batch, embeddings)
             ]
-            supabase.table("documents").insert(rows).execute()
+            doc_repo.insert_documents_batch(rows)
             total_uploaded += len(rows)
             if i + BATCH_SIZE < len(chunks):
                 await asyncio.sleep(SLEEP_BETWEEN)
@@ -359,9 +349,9 @@ async def upload_document(
                 found_ids    = extract_scholar_ids(all_texts)
                 is_broadcast = len(found_ids) == 0
                 notif        = craft_notification(doc_type, summary, is_broadcast)
-                users        = get_all_students(supabase) if is_broadcast else resolve_scholar_ids(found_ids, supabase)
+                users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
 
-                notice_insert = supabase.table("notices").insert({
+                notice_row = notice_repo.create_notice({
                     "title":          file.filename,
                     "content":        summary,
                     "notice_type":    doc_type,
@@ -370,11 +360,11 @@ async def upload_document(
                     "scholar_ids":    found_ids,
                     "is_broadcast":   is_broadcast,
                     "notified_count": len(users),
-                }).execute()
-                notice_id = notice_insert.data[0]["id"]
+                })
+                notice_id = notice_row["id"]
 
                 sent = dispatch_notifications(
-                    notice_id, users, notif["title"], notif["message_template"], supabase
+                    notice_id, users, notif["title"], notif["message_template"]
                 )
                 agent_result["notified"] = sent
                 print(f"[Agent] Notifications dispatched: {sent}")
@@ -405,15 +395,8 @@ async def upload_document(
 @app.get("/api/admin/documents")
 async def list_documents(_admin=Depends(require_admin)):
     try:
-        res  = supabase.table("documents").select("metadata").execute()
-        docs: dict = {}
-        for row in (res.data or []):
-            meta = row.get("metadata") or {}
-            src  = meta.get("source")
-            if src:
-                filename = Path(src).name
-                docs[filename] = docs.get(filename, 0) + 1
-        return [{"filename": k, "chunks": v} for k, v in sorted(docs.items())]
+        sources = doc_repo.list_all_document_sources()
+        return [{"filename": k, "chunks": v} for k, v in sources.items()]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -421,7 +404,7 @@ async def list_documents(_admin=Depends(require_admin)):
 @app.delete("/api/admin/documents/{filename}")
 async def delete_document(filename: str, _admin=Depends(require_admin)):
     try:
-        supabase.table("documents").delete().like("metadata->source", f"%{filename}").execute()
+        doc_repo.delete_document_by_filename(filename)
         file_path = Path("../data/pdfs") / filename
         if file_path.exists():
             file_path.unlink()
@@ -445,10 +428,10 @@ async def post_notice(req: NoticeRequest, _admin=Depends(require_admin)):
         found_ids    = extract_scholar_ids([req.content])
         is_broadcast = len(found_ids) == 0
         notif        = craft_notification(doc_type, summary, is_broadcast)
-        users        = get_all_students(supabase) if is_broadcast else resolve_scholar_ids(found_ids, supabase)
+        users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
         not_found_ids = [sid for sid in found_ids if sid not in {u["scholar_id"] for u in users}]
 
-        notice_insert = supabase.table("notices").insert({
+        notice_row = notice_repo.create_notice({
             "title":          req.title,
             "content":        req.content,
             "notice_type":    doc_type,
@@ -456,10 +439,10 @@ async def post_notice(req: NoticeRequest, _admin=Depends(require_admin)):
             "scholar_ids":    found_ids,
             "is_broadcast":   is_broadcast,
             "notified_count": len(users),
-        }).execute()
-        notice_id = notice_insert.data[0]["id"]
+        })
+        notice_id = notice_row["id"]
 
-        sent = dispatch_notifications(notice_id, users, notif["title"], notif["message_template"], supabase)
+        sent = dispatch_notifications(notice_id, users, notif["title"], notif["message_template"])
 
         # RAG ingestion
         rag_chunks     = chunk_notice_text(req.title, req.content, notice_id, doc_type)
@@ -469,7 +452,7 @@ async def post_notice(req: NoticeRequest, _admin=Depends(require_admin)):
             {"content": c["content"], "metadata": c["metadata"], "embedding": emb}
             for c, emb in zip(rag_chunks, rag_embeddings)
         ]
-        supabase.table("documents").insert(rag_rows).execute()
+        doc_repo.insert_documents_batch(rag_rows)
 
         return {
             "message":               "Notice posted and notifications dispatched.",
@@ -492,8 +475,7 @@ async def post_notice(req: NoticeRequest, _admin=Depends(require_admin)):
 async def list_notices(_admin=Depends(require_admin)):
     """Return all notices for the admin panel."""
     try:
-        res = supabase.table("notices").select("*").order("created_at", desc=True).limit(50).execute()
-        return res.data or []
+        return notice_repo.get_all_notices(limit=50)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -505,19 +487,10 @@ async def get_notifications(current_user=Depends(get_current_user)):
     """Fetch all notifications for the authenticated user (newest first)."""
     user_id = str(current_user.id)
     try:
-        res = (
-            supabase.table("user_notifications")
-            .select("id, notice_id, notification_title, notification_message, is_read, created_at")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .limit(50)
-            .execute()
-        )
-        notifications = res.data or []
+        notifications = notice_repo.get_user_notifications(user_id, limit=50)
         if notifications:
             notice_ids = list({n["notice_id"] for n in notifications if n["notice_id"]})
-            notice_res = supabase.table("notices").select("id, notice_type").in_("id", notice_ids).execute()
-            type_map   = {n["id"]: n["notice_type"] for n in (notice_res.data or [])}
+            type_map   = notice_repo.get_notice_types_by_ids(notice_ids)
             for notif in notifications:
                 ntype = type_map.get(notif["notice_id"], "general")
                 notif["notice_type"] = ntype
@@ -532,16 +505,9 @@ async def mark_notification_read(notif_id: str, current_user=Depends(get_current
     """Mark a single notification as read (ownership verified)."""
     user_id = str(current_user.id)
     try:
-        check = (
-            supabase.table("user_notifications")
-            .select("id")
-            .eq("id", notif_id)
-            .eq("user_id", user_id)
-            .execute()
-        )
-        if not check.data:
+        success = notice_repo.mark_notification_read(notif_id, user_id)
+        if not success:
             raise HTTPException(status_code=403, detail="Notification not found or access denied.")
-        supabase.table("user_notifications").update({"is_read": True}).eq("id", notif_id).execute()
         return {"message": "Notification marked as read."}
     except HTTPException:
         raise
@@ -554,7 +520,7 @@ async def mark_all_notifications_read(current_user=Depends(get_current_user)):
     """Mark all notifications as read for the authenticated user."""
     user_id = str(current_user.id)
     try:
-        supabase.table("user_notifications").update({"is_read": True}).eq("user_id", user_id).eq("is_read", False).execute()
+        notice_repo.mark_all_notifications_read(user_id)
         return {"message": "All notifications marked as read."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -588,7 +554,6 @@ async def submit_complaint(req: ComplaintRequest, current_user=Depends(get_curre
         result = process_complaint(
             text=req.text,
             user_info=user_info,
-            supabase=supabase,
             hostel_id=req.hostel_id,
             room_number=req.room_number,
         )
@@ -610,7 +575,7 @@ async def vote_complaint(complaint_id: str, current_user=Depends(get_current_use
     user_id   = str(current_user.id)
     user_info = await _fetch_profile(user_id)
     try:
-        result = vote_on_complaint(complaint_id, user_info, supabase)
+        result = vote_on_complaint(complaint_id, user_info)
         if result.get("error") == "already_voted":
             raise HTTPException(status_code=409, detail=result["message"])
         return result
@@ -625,15 +590,7 @@ async def get_my_complaints(current_user=Depends(get_current_user)):
     """Return all complaints submitted by the authenticated student."""
     user_id = str(current_user.id)
     try:
-        res = (
-            supabase.table("complaints")
-            .select("id, title, description, category, status, vote_count, hostel_details, created_at, updated_at")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .limit(20)
-            .execute()
-        )
-        complaints = res.data or []
+        complaints = complaint_repo.get_user_complaints(user_id, limit=20)
         for c in complaints:
             cat  = c.get("category", "general")
             stat = c.get("status", "open")
@@ -654,20 +611,7 @@ async def list_complaints(
 ):
     """Admin endpoint: all complaints, filterable by status and category."""
     try:
-        query = (
-            supabase.table("complaints")
-            .select("id, user_id, scholar_id, student_name, title, description, "
-                    "category, status, hostel_details, vote_count, created_at, updated_at")
-            .order("created_at", desc=True)
-            .limit(limit)
-        )
-        if status:
-            query = query.eq("status", status)
-        if category:
-            query = query.eq("category", category)
-
-        res        = query.execute()
-        complaints = res.data or []
+        complaints = complaint_repo.get_all_complaints(status=status, category=category, limit=limit)
         for c in complaints:
             cat  = c.get("category", "general")
             stat = c.get("status", "open")
@@ -690,15 +634,10 @@ async def update_complaint_status(
     if req.status not in valid:
         raise HTTPException(status_code=400, detail=f"Status must be one of: {', '.join(valid)}")
     try:
-        res = (
-            supabase.table("complaints")
-            .update({"status": req.status, "updated_at": "now()"})
-            .eq("id", complaint_id)
-            .execute()
-        )
-        if not res.data:
+        updated = complaint_repo.update_complaint_status(complaint_id, req.status)
+        if not updated:
             raise HTTPException(status_code=404, detail="Complaint not found.")
-        return {"message": f"Status updated to '{req.status}'.", "complaint": res.data[0]}
+        return {"message": f"Status updated to '{req.status}'.", "complaint": updated}
     except HTTPException:
         raise
     except Exception as e:
@@ -721,8 +660,7 @@ async def telegram_webhook(
 async def list_hostels():
     """Return all hostels for the frontend dropdown (public endpoint)."""
     try:
-        res = supabase.table("hostels").select("id, name, code").order("code").execute()
-        return res.data or []
+        return complaint_repo.get_all_hostels()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

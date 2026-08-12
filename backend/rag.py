@@ -5,6 +5,7 @@ from groq import Groq
 
 from app.core.config import settings
 from app.db.supabase import supabase
+import app.repositories.document_repository as doc_repo
 
 supabase_url = settings.SUPABASE_URL
 supabase_key = settings.SUPABASE_SERVICE_KEY
@@ -25,18 +26,37 @@ def get_gemini_embedding(text: str) -> List[float]:
     data = response.json()
     return data["embedding"]["values"]
 
+def hybrid_search(
+    query_text: str,
+    query_embedding: List[float],
+    match_count: int = 6,
+    filter_metadata: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Perform hybrid search (vector similarity + full-text search) via Supabase RPC.
+    Calls PostgreSQL function: hybrid_search_documents
+    """
+    try:
+        return doc_repo.execute_hybrid_search(
+            query_text=query_text,
+            query_embedding=query_embedding,
+            match_count=match_count,
+            filter_metadata=filter_metadata,
+        )
+    except Exception as e:
+        print(f"[RAG] hybrid_search error: {e}")
+        return []
+
 def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Query Supabase hybrid_search, then filter by score and deduplicate."""
     try:
         query_embedding = get_gemini_embedding(query)
-        params = {
-            "query_text": query,
-            "query_embedding": query_embedding,
-            "match_count": 12,          # Retrieve 12 candidates
-            "filter": metadata_filter or {}
-        }
-        res = supabase.rpc("hybrid_search", params).execute()
-        candidates = res.data or []
+        candidates = hybrid_search(
+            query_text=query,
+            query_embedding=query_embedding,
+            match_count=12,
+            filter_metadata=metadata_filter
+        )
 
         # ── 1. Score filtering: drop chunks below relevance threshold ──────────
         MIN_SCORE = 0.005

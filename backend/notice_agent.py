@@ -167,34 +167,23 @@ Keep it friendly, clear, and actionable. No markdown."""
 
 # ── Resolve scholar IDs → profile rows ───────────────────────────────────────
 
-def resolve_scholar_ids(scholar_ids: list[str], supabase) -> list[dict]:
+import app.repositories.user_repository as user_repo
+
+
+def resolve_scholar_ids(scholar_ids: list[str]) -> list[dict]:
     """
-    Look up profiles for each scholar ID in a single batched query.
+    Look up profiles for each scholar ID using user_repository.
     Returns list of { id, name, scholar_id } dicts for matched students.
     """
-    if not scholar_ids:
-        return []
-    try:
-        res = (
-            supabase.table("profiles")
-            .select("id, name, scholar_id")
-            .in_("scholar_id", scholar_ids)
-            .execute()
-        )
-        return res.data or []
-    except Exception as e:
-        print(f"[NoticeAgent] resolve_scholar_ids error: {e}")
-        return []
+    return user_repo.get_profiles_by_scholar_ids(scholar_ids)
 
 
-def get_all_students(supabase) -> list[dict]:
+def get_all_students() -> list[dict]:
     """Fetch all registered student profiles (for broadcast notifications)."""
-    try:
-        res = supabase.table("profiles").select("id, name, scholar_id").execute()
-        return res.data or []
-    except Exception as e:
-        print(f"[NoticeAgent] get_all_students error: {e}")
-        return []
+    return user_repo.get_all_student_profiles()
+
+
+import app.repositories.notice_repository as notice_repo
 
 
 # ── Dispatch: insert user_notifications rows ─────────────────────────────────
@@ -204,7 +193,6 @@ def dispatch_notifications(
     users: list[dict],
     title: str,
     message_template: str,
-    supabase,
     doc_type: str = "general"
 ) -> int:
     """
@@ -230,10 +218,7 @@ def dispatch_notifications(
         })
 
     try:
-        # Insert in batches of 50 to avoid payload limits
-        BATCH = 50
-        for i in range(0, len(rows), BATCH):
-            supabase.table("user_notifications").insert(rows[i : i + BATCH]).execute()
+        notice_repo.create_user_notifications_batch(rows, batch_size=50)
         print(f"[NoticeAgent] Dispatched {len(rows)} notifications for notice {notice_id}")
         
         # Push to Telegram for linked users
@@ -241,13 +226,7 @@ def dispatch_notifications(
             from telegram_bot import send_telegram_push
             if settings.TELEGRAM_BOT_TOKEN:
                 user_ids = [u["id"] for u in users]
-                tg_profiles = (
-                    supabase.table("profiles")
-                    .select("id, name, telegram_chat_id")
-                    .in_("id", user_ids)
-                    .not_.is_("telegram_chat_id", "null")
-                    .execute()
-                ).data or []
+                tg_profiles = user_repo.get_telegram_enabled_profiles(user_ids)
 
                 icon = NOTICE_ICONS.get(doc_type, "📢")
                 for p in tg_profiles:
