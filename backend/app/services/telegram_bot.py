@@ -2,15 +2,17 @@
 app/services/telegram_bot.py — Student Telegram Bot Service
 ─────────────────────────────────────────────────────────────
 Handles Telegram interaction for student queries, complaints, and notifications.
+Features DB-backed persistent session state and httpx communication.
 """
 
 import os
-import requests
 import json
 import httpx
 from typing import Dict, Any, Optional
 
 from app.core.config import settings
+from app.core.logger import logger
+from app.db.supabase import supabase
 from app.services.rag_service import get_answer
 from app.services.complaint_agent import classify_complaint, process_complaint, STATUS_LABELS
 import app.repositories.user_repository as user_repo
@@ -18,11 +20,41 @@ import app.repositories.user_repository as user_repo
 BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN or ""
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-# In-memory state: {chat_id: "awaiting_scholar_id" | "awaiting_complaint" | None}
-_bot_state: dict = {}
+# In-memory fast fallback state
+_bot_state_fallback: dict = {}
+
+
+# ── DB-backed Persistent Session Helpers ───────────────────────────────────────
+
+def _get_bot_state(chat_id: str) -> Optional[str]:
+    """Retrieve active session state for a chat_id (DB first, in-memory fallback)."""
+    try:
+        res = supabase.table("bot_sessions").select("state").eq("chat_id", str(chat_id)).execute()
+        if res.data and res.data[0]:
+            return res.data[0].get("state")
+    except Exception:
+        pass
+    return _bot_state_fallback.get(str(chat_id))
+
+
+def _set_bot_state(chat_id: str, state: Optional[str], data: Optional[Dict] = None):
+    """Set or clear active session state (DB first, in-memory fallback)."""
+    _bot_state_fallback[str(chat_id)] = state
+    try:
+        if state is None:
+            supabase.table("bot_sessions").delete().eq("chat_id", str(chat_id)).execute()
+        else:
+            supabase.table("bot_sessions").upsert({
+                "chat_id": str(chat_id),
+                "state": state,
+                "data": data or {},
+            }, on_conflict="chat_id").execute()
+    except Exception:
+        pass
+
 
 def send_message(chat_id: str, text: str, parse_mode: str = "Markdown", reply_markup: Optional[Dict] = None):
-    """Send any text message to a Telegram chat."""
+    """Send a text message via httpx."""
     if not BOT_TOKEN:
         return
     url = f"{TELEGRAM_API}/sendMessage"
@@ -35,9 +67,11 @@ def send_message(chat_id: str, text: str, parse_mode: str = "Markdown", reply_ma
         payload["reply_markup"] = reply_markup
         
     try:
-        requests.post(url, json=payload, timeout=5)
+        with httpx.Client(timeout=5.0) as client:
+            client.post(url, json=payload)
     except Exception as e:
-        print(f"[TelegramBot] send_message error: {e}")
+        logger.error(f"[TelegramBot] send_message error: {e}")
+
 
 def send_telegram_push(chat_id: str, title: str, message: str, icon: str = "📢"):
     """Used by notice_agent — push a notice to a student's Telegram."""
@@ -45,7 +79,7 @@ def send_telegram_push(chat_id: str, title: str, message: str, icon: str = "📢
     send_message(chat_id, text)
 
 
-def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
+def _link_scholar_id(chat_id: str, scholar_id_text: str, _db=None):
     scholar_id = scholar_id_text.strip()
     if len(scholar_id) != 7 or not scholar_id.isdigit():
         send_message(chat_id, "⚠️ Invalid Scholar ID format. Please enter a 7-digit number.")
@@ -63,12 +97,11 @@ def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
 
         if existing_chat and existing_chat != str(chat_id):
              send_message(chat_id, f"⚠️ This Scholar ID is already linked to another Telegram account.")
-             _bot_state[chat_id] = None
+             _set_bot_state(chat_id, None)
              return
 
         user_repo.link_telegram_chat_id(user_id, chat_id)
-        
-        _bot_state[chat_id] = None
+        _set_bot_state(chat_id, None)
         
         welcome_text = (
             f"✅ *Account linked!*\n\n"
@@ -83,12 +116,12 @@ def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
         send_message(chat_id, welcome_text)
 
     except Exception as e:
-        print(f"[TelegramBot] _link_scholar_id error: {e}")
+        logger.error(f"[TelegramBot] _link_scholar_id error: {e}")
         send_message(chat_id, "❌ An error occurred while linking your account. Please try again later.")
-        _bot_state[chat_id] = None
+        _set_bot_state(chat_id, None)
 
 
-def _handle_my_complaints(chat_id: str, user_id: str, supabase):
+def _handle_my_complaints(chat_id: str, user_id: str, _db=None):
     try:
         res = supabase.table("complaints").select("id, title, status, category, vote_count, created_at").eq("user_id", user_id).order("created_at", desc=True).limit(5).execute()
         complaints = res.data or []
@@ -110,11 +143,11 @@ def _handle_my_complaints(chat_id: str, user_id: str, supabase):
             
         send_message(chat_id, text.strip())
     except Exception as e:
-        print(f"[TelegramBot] _handle_my_complaints error: {e}")
+        logger.error(f"[TelegramBot] _handle_my_complaints error: {e}")
         send_message(chat_id, "❌ Could not fetch complaints.")
 
 
-def _handle_notifications(chat_id: str, user_id: str, supabase):
+def _handle_notifications(chat_id: str, user_id: str, _db=None):
     try:
         res = supabase.table("user_notifications").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(5).execute()
         notifs = res.data or []
@@ -132,18 +165,18 @@ def _handle_notifications(chat_id: str, user_id: str, supabase):
             
         send_message(chat_id, text.strip())
     except Exception as e:
-        print(f"[TelegramBot] _handle_notifications error: {e}")
+        logger.error(f"[TelegramBot] _handle_notifications error: {e}")
         send_message(chat_id, "❌ Could not fetch notifications.")
 
 
-def _handle_complaint_submission(chat_id: str, text: str, user_info: dict, supabase):
+def _handle_complaint_submission(chat_id: str, text: str, user_info: dict, _db=None):
     send_message(chat_id, "⏳ Analyzing your complaint...")
     
     classification = classify_complaint(text)
     
     if not classification.get("is_complaint"):
         send_message(chat_id, "ℹ️ This doesn't look like a complaint. If you meant to ask a question, just type it normally!")
-        _bot_state[chat_id] = None
+        _set_bot_state(chat_id, None)
         return
         
     try:
@@ -162,10 +195,10 @@ def _handle_complaint_submission(chat_id: str, text: str, user_info: dict, supab
              send_message(chat_id, msg)
              
     except Exception as e:
-         print(f"[TelegramBot] _handle_complaint_submission error: {e}")
+         logger.error(f"[TelegramBot] _handle_complaint_submission error: {e}")
          send_message(chat_id, "❌ An error occurred filing your complaint.")
          
-    _bot_state[chat_id] = None
+    _set_bot_state(chat_id, None)
 
 
 def _handle_rag_query(chat_id: str, query: str, user_info: dict):
@@ -176,11 +209,11 @@ def _handle_rag_query(chat_id: str, query: str, user_info: dict):
         answer = answer.replace("**", "*")
         send_message(chat_id, answer)
     except Exception as e:
-        print(f"[TelegramBot] _handle_rag_query error: {e}")
+        logger.error(f"[TelegramBot] _handle_rag_query error: {e}")
         send_message(chat_id, "❌ Error retrieving answer.")
 
 
-def handle_update(update: dict, supabase=None):
+def handle_update(update: dict, _db=None):
     message = update.get("message")
     if not message:
         return
@@ -191,32 +224,32 @@ def handle_update(update: dict, supabase=None):
     if not chat_id or not text:
         return
         
-    print(f"[TelegramBot] Received message from {chat_id}: {text[:50]}")
+    logger.info(f"[TelegramBot] Received message from {chat_id}: {text[:50]}")
 
     user_info = None
     try:
         user_info = user_repo.get_profile_by_telegram_chat_id(chat_id)
     except Exception as e:
-        print(f"[TelegramBot] User lookup error: {e}")
+        logger.error(f"[TelegramBot] User lookup error: {e}")
 
-    state = _bot_state.get(chat_id)
+    state = _get_bot_state(chat_id)
 
     if state == "awaiting_scholar_id":
         if text.startswith("/"):
-            _bot_state[chat_id] = None
+            _set_bot_state(chat_id, None)
         else:
-            _link_scholar_id(chat_id, text, supabase)
+            _link_scholar_id(chat_id, text)
             return
             
     elif state == "awaiting_complaint":
         if text.startswith("/"):
-            _bot_state[chat_id] = None
+            _set_bot_state(chat_id, None)
         else:
-            _handle_complaint_submission(chat_id, text, user_info, supabase)
+            _handle_complaint_submission(chat_id, text, user_info)
             return
 
     if text.startswith("/start"):
-        _bot_state[chat_id] = "awaiting_scholar_id"
+        _set_bot_state(chat_id, "awaiting_scholar_id")
         send_message(chat_id, "👋 Welcome to *CampusMind*!\n\nPlease enter your 7-digit Scholar ID to link your account:")
         return
         
@@ -238,16 +271,16 @@ def handle_update(update: dict, supabase=None):
         return
 
     if text.startswith("/complaint"):
-        _bot_state[chat_id] = "awaiting_complaint"
+        _set_bot_state(chat_id, "awaiting_complaint")
         send_message(chat_id, "📝 Please describe your issue or complaint in a few sentences:")
         return
         
     elif text.startswith("/mycomplaints"):
-        _handle_my_complaints(chat_id, user_info["id"], supabase)
+        _handle_my_complaints(chat_id, user_info["id"])
         return
         
     elif text.startswith("/notifications"):
-        _handle_notifications(chat_id, user_info["id"], supabase)
+        _handle_notifications(chat_id, user_info["id"])
         return
         
     _handle_rag_query(chat_id, text, user_info)
@@ -256,7 +289,7 @@ def handle_update(update: dict, supabase=None):
 async def setup_webhook():
     webhook_url = settings.TELEGRAM_WEBHOOK_URL
     if not BOT_TOKEN or not webhook_url:
-        print("[TelegramBot] TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_URL not set. Skipping webhook setup.")
+        logger.info("[TelegramBot] TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_URL not set. Skipping webhook setup.")
         return
         
     url = f"{TELEGRAM_API}/setWebhook"
@@ -264,6 +297,6 @@ async def setup_webhook():
         async with httpx.AsyncClient() as client:
             res = await client.post(url, json={"url": webhook_url})
             res.raise_for_status()
-            print(f"[TelegramBot] Webhook registered successfully: {res.json()}")
+            logger.info(f"[TelegramBot] Webhook registered successfully: {res.json()}")
     except Exception as e:
-        print(f"[TelegramBot] Failed to set webhook: {e}")
+        logger.error(f"[TelegramBot] Failed to set webhook: {e}")
