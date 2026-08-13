@@ -17,7 +17,7 @@ Why a service?
 
 from typing import Any, Dict, Optional
 import app.repositories.chat_repository as chat_repo
-from rag import get_answer
+from app.services.rag_service import get_answer
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

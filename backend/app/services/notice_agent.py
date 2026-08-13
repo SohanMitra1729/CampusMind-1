@@ -1,9 +1,8 @@
 """
-notice_agent.py — Agentic Notice Processing Pipeline
-
+app/services/notice_agent.py — Agentic Notice Processing Pipeline
+─────────────────────────────────────────────────────────────────
 3-Stage funnel to classify documents and dispatch targeted notifications
 with minimal LLM token usage:
-
   Stage 1: CLASSIFY  — LLM sees only first 300 chars + filename (~120 tokens)
   Stage 2: EXTRACT   — Pure regex, zero LLM cost
   Stage 3: CRAFT     — LLM sees only doc_type + 1-sentence summary (~80 tokens)
@@ -15,10 +14,11 @@ import json
 from typing import Optional
 from groq import Groq
 from app.core.config import settings
+import app.repositories.user_repository as user_repo
+import app.repositories.notice_repository as notice_repo
 
 groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
-# Document types that should trigger the notification pipeline
 NOTIFY_TYPES = {
     "holiday",
     "exam_notice",
@@ -29,7 +29,6 @@ NOTIFY_TYPES = {
     "event_notice",
 }
 
-# Emoji icons per notice type for the frontend
 NOTICE_ICONS = {
     "holiday":        "🏖️",
     "exam_notice":    "📝",
@@ -45,18 +44,7 @@ NOTICE_ICONS = {
 # ── Stage 1: Classify (cheap — first 300 chars only) ──────────────────────────
 
 def classify_document(first_chunk_text: str, filename: str) -> dict:
-    """
-    Classify a document using only the first ~300 characters of its first chunk
-    plus the filename. Sends approximately 120 tokens to the LLM.
-
-    Returns:
-        {
-            "doc_type": str,       # see NOTIFY_TYPES or "general"
-            "is_targeted": bool,   # True if notice mentions specific students
-            "summary": str         # one sentence describing the document
-        }
-    """
-    # Truncate to first 300 chars to keep tokens minimal
+    """Classify a document using only the first ~300 characters of its first chunk."""
     excerpt = first_chunk_text[:300].strip()
 
     prompt = f"""You are a document classifier for a university system.
@@ -94,7 +82,6 @@ Rules:
             max_tokens=120,
         )
         raw = resp.choices[0].message.content.strip()
-        # Strip possible markdown fences
         raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
         return json.loads(raw)
     except Exception as e:
@@ -105,12 +92,6 @@ Rules:
 # ── Stage 2: Extract scholar IDs (pure regex — zero LLM cost) ─────────────────
 
 def extract_scholar_ids(chunk_texts: list[str]) -> list[str]:
-    """
-    Scan all chunk texts for 7-digit scholar/registration IDs using regex.
-    No LLM involved — pure string matching.
-
-    Returns a deduplicated list of 7-digit ID strings.
-    """
     scholar_id_pattern = re.compile(r'\b\d{7}\b')
     found: set[str] = set()
     for text in chunk_texts:
@@ -121,16 +102,6 @@ def extract_scholar_ids(chunk_texts: list[str]) -> list[str]:
 # ── Stage 3: Craft notification (minimal context — ~80 tokens) ────────────────
 
 def craft_notification(doc_type: str, summary: str, is_broadcast: bool) -> dict:
-    """
-    Generate a notification title and message template using minimal context.
-    The {name} placeholder in message_template is replaced per-student at dispatch time.
-
-    Returns:
-        {
-            "title": str,
-            "message_template": str   # may contain {name} placeholder
-        }
-    """
     audience = "all students" if is_broadcast else "specific students"
     prompt = f"""You are writing a brief in-app notification for a university student portal.
 
@@ -158,7 +129,6 @@ Keep it friendly, clear, and actionable. No markdown."""
         return json.loads(raw)
     except Exception as e:
         print(f"[NoticeAgent] craft_notification error: {e}")
-        # Fallback notification
         return {
             "title": "New Notice Posted",
             "message_template": f"A new {doc_type.replace('_', ' ')} has been posted. Please check the admin portal.",
@@ -167,23 +137,12 @@ Keep it friendly, clear, and actionable. No markdown."""
 
 # ── Resolve scholar IDs → profile rows ───────────────────────────────────────
 
-import app.repositories.user_repository as user_repo
-
-
 def resolve_scholar_ids(scholar_ids: list[str]) -> list[dict]:
-    """
-    Look up profiles for each scholar ID using user_repository.
-    Returns list of { id, name, scholar_id } dicts for matched students.
-    """
     return user_repo.get_profiles_by_scholar_ids(scholar_ids)
 
 
 def get_all_students() -> list[dict]:
-    """Fetch all registered student profiles (for broadcast notifications)."""
     return user_repo.get_all_student_profiles()
-
-
-import app.repositories.notice_repository as notice_repo
 
 
 # ── Dispatch: insert user_notifications rows ─────────────────────────────────
@@ -195,12 +154,6 @@ def dispatch_notifications(
     message_template: str,
     doc_type: str = "general"
 ) -> int:
-    """
-    Bulk-insert one user_notifications row per user.
-    Substitutes {name} in message_template for each student.
-
-    Returns number of notifications inserted.
-    """
     if not users:
         return 0
 
@@ -221,9 +174,8 @@ def dispatch_notifications(
         notice_repo.create_user_notifications_batch(rows, batch_size=50)
         print(f"[NoticeAgent] Dispatched {len(rows)} notifications for notice {notice_id}")
         
-        # Push to Telegram for linked users
         try:
-            from telegram_bot import send_telegram_push
+            from app.services.telegram_bot import send_telegram_push
             if settings.TELEGRAM_BOT_TOKEN:
                 user_ids = [u["id"] for u in users]
                 tg_profiles = user_repo.get_telegram_enabled_profiles(user_ids)
@@ -246,10 +198,6 @@ def dispatch_notifications(
 # ── Text-notice chunker (for Workflow B RAG ingestion) ───────────────────────
 
 def chunk_notice_text(title: str, content: str, notice_id: str, notice_type: str) -> list[dict]:
-    """
-    Split a text notice into RAG-ingestible chunks (same format as pdf_processor).
-    For short notices this is usually a single chunk.
-    """
     MAX_CHARS = 800
     full_text = f"{title}\n\n{content}"
     chunks = []

@@ -11,9 +11,9 @@ so Telegram's webhook timeout (5s) is never exceeded.
 
 from fastapi import APIRouter, BackgroundTasks, Body
 
-from rag import supabase
-from telegram_bot import handle_update
-from staff_bot import handle_staff_update
+from app.db.supabase import supabase
+from app.services.telegram_bot import handle_update
+from app.services.staff_bot import handle_staff_update
 
 router = APIRouter()
 

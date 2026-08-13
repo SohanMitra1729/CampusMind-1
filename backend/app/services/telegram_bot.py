@@ -1,3 +1,9 @@
+"""
+app/services/telegram_bot.py — Student Telegram Bot Service
+─────────────────────────────────────────────────────────────
+Handles Telegram interaction for student queries, complaints, and notifications.
+"""
+
 import os
 import requests
 import json
@@ -5,8 +11,9 @@ import httpx
 from typing import Dict, Any, Optional
 
 from app.core.config import settings
-from rag import get_answer
-from complaint_agent import classify_complaint, process_complaint, STATUS_LABELS
+from app.services.rag_service import get_answer
+from app.services.complaint_agent import classify_complaint, process_complaint, STATUS_LABELS
+import app.repositories.user_repository as user_repo
 
 BOT_TOKEN = settings.TELEGRAM_BOT_TOKEN or ""
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
@@ -28,8 +35,6 @@ def send_message(chat_id: str, text: str, parse_mode: str = "Markdown", reply_ma
         payload["reply_markup"] = reply_markup
         
     try:
-        # Fire and forget mostly, but we use httpx for non-blocking if possible,
-        # but here we can just use requests since this is in a background task
         requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(f"[TelegramBot] send_message error: {e}")
@@ -40,17 +45,7 @@ def send_telegram_push(chat_id: str, title: str, message: str, icon: str = "📢
     send_message(chat_id, text)
 
 
-import app.repositories.user_repository as user_repo
-
-
 def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
-    """
-    1. Strip/validate 7-digit scholar ID from user text
-    2. Query profiles WHERE scholar_id = ?
-    3. If found: UPDATE profiles SET telegram_chat_id = chat_id
-    4. Reply: "✅ Linked! Welcome, [Name]."
-    5. If not found: reply error, stay in AWAITING_SCHOLAR_ID state
-    """
     scholar_id = scholar_id_text.strip()
     if len(scholar_id) != 7 or not scholar_id.isdigit():
         send_message(chat_id, "⚠️ Invalid Scholar ID format. Please enter a 7-digit number.")
@@ -71,10 +66,9 @@ def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
              _bot_state[chat_id] = None
              return
 
-        # Link it
         user_repo.link_telegram_chat_id(user_id, chat_id)
         
-        _bot_state[chat_id] = None # Clear state
+        _bot_state[chat_id] = None
         
         welcome_text = (
             f"✅ *Account linked!*\n\n"
@@ -95,10 +89,6 @@ def _link_scholar_id(chat_id: str, scholar_id_text: str, supabase=None):
 
 
 def _handle_my_complaints(chat_id: str, user_id: str, supabase):
-    """
-    Fetches complaints WHERE user_id = ?
-    Formats as a readable list with status icons and vote counts
-    """
     try:
         res = supabase.table("complaints").select("id, title, status, category, vote_count, created_at").eq("user_id", user_id).order("created_at", desc=True).limit(5).execute()
         complaints = res.data or []
@@ -116,8 +106,6 @@ def _handle_my_complaints(chat_id: str, user_id: str, supabase):
             status_label = status_info[1]
             title = c["title"]
             votes = c["vote_count"]
-            
-            # Very rough time ago logic (just keeping it simple for display or omit)
             text += f"{icon} {title}\n   {icon} {status_label} · 👥 {votes} votes\n\n"
             
         send_message(chat_id, text.strip())
@@ -125,10 +113,8 @@ def _handle_my_complaints(chat_id: str, user_id: str, supabase):
         print(f"[TelegramBot] _handle_my_complaints error: {e}")
         send_message(chat_id, "❌ Could not fetch complaints.")
 
+
 def _handle_notifications(chat_id: str, user_id: str, supabase):
-    """
-    Fetches last 5 user_notifications WHERE user_id = ? ORDER BY created_at DESC
-    """
     try:
         res = supabase.table("user_notifications").select("*").eq("user_id", user_id).order("created_at", desc=True).limit(5).execute()
         notifs = res.data or []
@@ -151,12 +137,6 @@ def _handle_notifications(chat_id: str, user_id: str, supabase):
 
 
 def _handle_complaint_submission(chat_id: str, text: str, user_info: dict, supabase):
-    """
-    Calls classify_complaint(text)
-    If is_complaint → calls process_complaint() → formats result
-    Shows: "✅ Filed as [category]! X similar complaints found."
-    If not_complaint → "This doesn't look like a complaint. Just type normally to ask questions."
-    """
     send_message(chat_id, "⏳ Analyzing your complaint...")
     
     classification = classify_complaint(text)
@@ -167,8 +147,7 @@ def _handle_complaint_submission(chat_id: str, text: str, user_info: dict, supab
         return
         
     try:
-        # Submit the complaint
-        result = process_complaint(text, classification, user_info, supabase)
+        result = process_complaint(text, user_info)
         
         if "error" in result:
              send_message(chat_id, f"❌ Failed to submit complaint: {result['error']}")
@@ -190,33 +169,18 @@ def _handle_complaint_submission(chat_id: str, text: str, user_info: dict, supab
 
 
 def _handle_rag_query(chat_id: str, query: str, user_info: dict):
-    """
-    Calls get_answer(query, user_info=user_info) from rag.py
-    Formats the answer (strip markdown if too long for Telegram)
-    """
     send_message(chat_id, "🔍 Thinking...")
     try:
         result = get_answer(query, user_info=user_info)
         answer = result.get("answer", "I couldn't find an answer to that.")
-        
-        # Simple cleanup for Telegram markdown compatibility (Telegrams Markdown is a bit strict, but we'll try)
-        # We might need to handle Telegram MarkdownV2 or just rely on basic Markdown
-        # Telegram Markdown doesn't support **, it supports * for bold.
         answer = answer.replace("**", "*")
-        
         send_message(chat_id, answer)
     except Exception as e:
         print(f"[TelegramBot] _handle_rag_query error: {e}")
         send_message(chat_id, "❌ Error retrieving answer.")
 
 
-def handle_update(update: dict, supabase):
-    """
-    Main entry point called from the FastAPI webhook endpoint.
-    1. Extract chat_id, text, username from update dict
-    2. Look up profile by telegram_chat_id → get user_info
-    3. Route to correct handler based on command or state
-    """
+def handle_update(update: dict, supabase=None):
     message = update.get("message")
     if not message:
         return
@@ -229,7 +193,6 @@ def handle_update(update: dict, supabase):
         
     print(f"[TelegramBot] Received message from {chat_id}: {text[:50]}")
 
-    # Check for linked account
     user_info = None
     try:
         user_info = user_repo.get_profile_by_telegram_chat_id(chat_id)
@@ -238,22 +201,20 @@ def handle_update(update: dict, supabase):
 
     state = _bot_state.get(chat_id)
 
-    # 1. State Handlers First
     if state == "awaiting_scholar_id":
         if text.startswith("/"):
-            _bot_state[chat_id] = None # Cancel state if command
+            _bot_state[chat_id] = None
         else:
             _link_scholar_id(chat_id, text, supabase)
             return
             
     elif state == "awaiting_complaint":
         if text.startswith("/"):
-            _bot_state[chat_id] = None # Cancel state if command
+            _bot_state[chat_id] = None
         else:
             _handle_complaint_submission(chat_id, text, user_info, supabase)
             return
 
-    # 2. Command Handlers
     if text.startswith("/start"):
         _bot_state[chat_id] = "awaiting_scholar_id"
         send_message(chat_id, "👋 Welcome to *CampusMind*!\n\nPlease enter your 7-digit Scholar ID to link your account:")
@@ -272,7 +233,6 @@ def handle_update(update: dict, supabase):
         send_message(chat_id, help_text)
         return
 
-    # 3. Requires Authentication Beyond This Point
     if not user_info:
         send_message(chat_id, "⚠️ You need to link your account first. Please type /start and enter your Scholar ID.")
         return
@@ -290,16 +250,10 @@ def handle_update(update: dict, supabase):
         _handle_notifications(chat_id, user_info["id"], supabase)
         return
         
-    # 4. Default: RAG Query
     _handle_rag_query(chat_id, text, user_info)
 
 
 async def setup_webhook():
-    """
-    Called on FastAPI startup.
-    Calls https://api.telegram.org/bot{TOKEN}/setWebhook
-    with TELEGRAM_WEBHOOK_URL from .env
-    """
     webhook_url = settings.TELEGRAM_WEBHOOK_URL
     if not BOT_TOKEN or not webhook_url:
         print("[TelegramBot] TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_URL not set. Skipping webhook setup.")
@@ -307,7 +261,6 @@ async def setup_webhook():
         
     url = f"{TELEGRAM_API}/setWebhook"
     try:
-        # Need an async client for startup
         async with httpx.AsyncClient() as client:
             res = await client.post(url, json={"url": webhook_url})
             res.raise_for_status()

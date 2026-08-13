@@ -17,7 +17,7 @@ Why a service?
 
 from typing import Any, Dict, List, Optional
 import app.repositories.complaint_repository as complaint_repo
-from complaint_agent import (
+from app.services.complaint_agent import (
     classify_complaint,
     process_complaint,
     vote_on_complaint,

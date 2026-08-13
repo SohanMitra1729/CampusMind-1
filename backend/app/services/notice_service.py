@@ -36,8 +36,8 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 import app.repositories.notice_repository as notice_repo
 import app.repositories.document_repository as doc_repo
-from pdf_processor import process_pdf
-from notice_agent import (
+from app.services.pdf_processor import process_pdf
+from app.services.notice_agent import (
     classify_document,
     extract_scholar_ids,
     craft_notification,

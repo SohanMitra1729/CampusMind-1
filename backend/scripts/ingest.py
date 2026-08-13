@@ -1,29 +1,21 @@
 """
 ingest.py – Batch ingestion script for all PDFs in ../data/pdfs/
 Uses the smart pdf_processor module for auto content-type detection.
-Run: python ingest.py
+Run: python -m scripts.ingest
 """
 import os
 import sys
 import glob
 import time
 from pathlib import Path
-from dotenv import load_dotenv
-from supabase.client import Client, create_client
+
+# Add project root to sys.path so app imports work when run as script
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-from pdf_processor import process_pdf
-
-load_dotenv(dotenv_path="../.env")
-
-supabase_url = os.environ.get("SUPABASE_URL")
-supabase_key = os.environ.get("SUPABASE_SERVICE_KEY")
-
-if not supabase_url or not supabase_key:
-    print("ERROR: SUPABASE_URL or SUPABASE_SERVICE_KEY is missing from .env")
-    sys.exit(1)
-
-supabase: Client = create_client(supabase_url, supabase_key)
+from app.core.config import settings
+from app.db.supabase import supabase
+from app.services.pdf_processor import process_pdf
 
 print("Initializing Google Gemini Embeddings...")
 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")

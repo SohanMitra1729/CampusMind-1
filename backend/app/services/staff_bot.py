@@ -1,17 +1,7 @@
 """
-staff_bot.py — Dedicated Telegram Bot for Staff Members
-────────────────────────────────────────────────────────
+app/services/staff_bot.py — Dedicated Telegram Bot for Staff Members
+────────────────────────────────────────────────────────────────────
 Staff roles supported: electrical | cleaning | mess_manager | watchmen
-
-Registration flow:
-  1. /start  → ask for phone number
-  2. Show hostel list (from DB) → user picks one
-  3. Show role options → user picks one
-  4. Save to staff_members table
-
-Complaint forwarding:
-  - send_complaint_to_staff(complaint_row, hostel_id, room_number, category, supabase)
-    routes to all active staff matching role + hostel, with ack/resolve inline buttons.
 """
 
 import os
@@ -26,12 +16,11 @@ from app.core.config import settings
 STAFF_BOT_TOKEN = settings.STAFF_BOT_TOKEN or ""
 STAFF_TELEGRAM_API = f"https://api.telegram.org/bot{STAFF_BOT_TOKEN}"
 
-# ── Role mapping: complaint category → staff role ─────────────────────────────
 CATEGORY_TO_ROLE: Dict[str, str] = {
-    "facility":  "electrical",    # electrical / maintenance issues
-    "hostel":    "watchmen",      # general hostel issues → watchmen
-    "mess":      "mess_manager",  # food/mess issues → mess manager
-    "general":   "cleaning",      # general/cleanliness → cleaning (fallback)
+    "facility":  "electrical",
+    "hostel":    "watchmen",
+    "mess":      "mess_manager",
+    "general":   "cleaning",
 }
 
 ROLE_ICONS: Dict[str, str] = {
@@ -48,16 +37,11 @@ ROLE_LABELS: Dict[str, str] = {
     "watchmen":     "Watchmen / Security",
 }
 
-# In-memory registration state per chat_id
-# State values: None | "awaiting_phone" | "awaiting_hostel" | "awaiting_role"
 _staff_state: Dict[str, Dict[str, Any]] = {}
 
 
-# ── Telegram helpers ──────────────────────────────────────────────────────────
-
 def _send(chat_id: str, text: str, parse_mode: str = "Markdown",
           reply_markup: Optional[Dict] = None):
-    """Send a message via the Staff Bot."""
     if not STAFF_BOT_TOKEN:
         print("[StaffBot] STAFF_BOT_TOKEN not set. Message not sent.")
         return
@@ -75,7 +59,6 @@ def _send(chat_id: str, text: str, parse_mode: str = "Markdown",
 
 
 def _answer_callback(callback_query_id: str, text: str = ""):
-    """Answer a callback_query to remove the loading spinner."""
     if not STAFF_BOT_TOKEN:
         return
     try:
@@ -89,7 +72,6 @@ def _answer_callback(callback_query_id: str, text: str = ""):
 
 
 def _edit_message_text(chat_id: str, message_id: int, text: str, parse_mode: str = "Markdown"):
-    """Edit a previously sent message."""
     if not STAFF_BOT_TOKEN:
         return
     try:
@@ -103,10 +85,7 @@ def _edit_message_text(chat_id: str, message_id: int, text: str, parse_mode: str
         print(f"[StaffBot] edit_message error: {e}")
 
 
-# ── Hostel keyboard builder ───────────────────────────────────────────────────
-
 def _hostel_keyboard(hostels: List[Dict]) -> Dict:
-    """Build an inline keyboard of hostel buttons (2 per row)."""
     buttons = []
     row = []
     for h in hostels:
@@ -120,7 +99,6 @@ def _hostel_keyboard(hostels: List[Dict]) -> Dict:
 
 
 def _role_keyboard() -> Dict:
-    """Build an inline keyboard for the four staff roles."""
     buttons = [
         [{"text": f"{ROLE_ICONS['electrical']} Electrical / Maintenance",
           "callback_data": "role:electrical"}],
@@ -134,8 +112,6 @@ def _role_keyboard() -> Dict:
     return {"inline_keyboard": buttons}
 
 
-# ── Registration flow ─────────────────────────────────────────────────────────
-
 def _start_registration(chat_id: str):
     _staff_state[chat_id] = {"step": "awaiting_phone"}
     _send(chat_id, (
@@ -146,14 +122,12 @@ def _start_registration(chat_id: str):
 
 def _handle_phone(chat_id: str, text: str, supabase):
     phone = text.strip()
-    # Basic E.164-ish validation
     if not re.match(r"^\+?\d{10,15}$", phone):
         _send(chat_id, "⚠️ Invalid phone number. Please enter a valid number (e.g. +919876543210):")
         return
     _staff_state[chat_id]["phone"] = phone
     _staff_state[chat_id]["step"] = "awaiting_hostel"
 
-    # Fetch hostels from DB
     try:
         res = supabase.table("hostels").select("id, name, code").order("code").execute()
         hostels = res.data or []
@@ -191,7 +165,6 @@ def _handle_role_callback(chat_id: str, role: str, supabase):
         return
 
     try:
-        # Upsert into staff_members on phone_number conflict
         supabase.table("staff_members").upsert({
             "phone_number":     phone,
             "telegram_chat_id": str(chat_id),
@@ -249,8 +222,6 @@ def _handle_my_status(chat_id: str, supabase):
         _send(chat_id, "❌ Could not fetch your profile.")
 
 
-# ── Complaint forwarding (called from complaint_agent.py) ─────────────────────
-
 def send_complaint_to_staff(
     complaint_id: str,
     title: str,
@@ -260,22 +231,13 @@ def send_complaint_to_staff(
     hostel_name: str,
     room_number: Optional[str],
     student_name: str,
-    supabase,
-    staff_role: Optional[str] = None,   # LLM-determined role; falls back to CATEGORY_TO_ROLE
+    supabase=None,
+    staff_role: Optional[str] = None,
 ):
-    """
-    Find all active staff matching the complaint's role and hostel,
-    then send a formatted notification with Ack / Resolve inline buttons.
-
-    Two-pass hostel strategy:
-      Pass 1: role + hostel_id (exact match)
-      Pass 2: role only (no hostel filter) — fallback when no exact match found
-    """
     if not STAFF_BOT_TOKEN:
         print("[StaffBot] STAFF_BOT_TOKEN not set. Complaint not forwarded.")
         return
 
-    # Determine required staff role — prefer LLM-determined, fall back to category table
     role = staff_role or CATEGORY_TO_ROLE.get(category, "watchmen")
     if not role:
         print(f"[StaffBot] No staff role determined for category={category}. Skipping forward.")
@@ -283,11 +245,12 @@ def send_complaint_to_staff(
 
     print(f"[StaffBot] Routing complaint to role={role} (staff_role={staff_role}, category={category})")
 
-    # ── Pass 1: Match by role AND hostel ──────────────────────────────────────
     staff_list = []
     try:
+        from app.db.supabase import supabase as default_supabase
+        db_client = supabase or default_supabase
         query = (
-            supabase.table("staff_members")
+            db_client.table("staff_members")
             .select("telegram_chat_id, role, hostel_id")
             .eq("role", role)
             .eq("active", True)
@@ -300,11 +263,12 @@ def send_complaint_to_staff(
     except Exception as e:
         print(f"[StaffBot] staff query error (pass 1): {e}")
 
-    # ── Pass 2: Fallback — match by role only (any hostel) ───────────────────
     if not staff_list and hostel_id:
         try:
+            from app.db.supabase import supabase as default_supabase
+            db_client = supabase or default_supabase
             res2 = (
-                supabase.table("staff_members")
+                db_client.table("staff_members")
                 .select("telegram_chat_id, role, hostel_id")
                 .eq("role", role)
                 .eq("active", True)
@@ -319,7 +283,6 @@ def send_complaint_to_staff(
         print(f"[StaffBot] No active staff found for role={role} in any hostel. Cannot forward complaint.")
         return
 
-    # Build message
     location_line = f"🏠 Hostel: *{hostel_name}*"
     if room_number:
         location_line += f"  |  🚪 Room: *{room_number}*"
@@ -354,10 +317,8 @@ def send_complaint_to_staff(
     print(f"[StaffBot] Complaint {complaint_id} forwarded to {len(staff_list)} staff member(s).")
 
 
-# ── Callback handler for Ack / Resolve ───────────────────────────────────────
-
 def _handle_staff_callback(chat_id: str, callback_data: str, callback_query_id: str,
-                            message_id: int, supabase):
+                            message_id: int, supabase=None):
     parts = callback_data.split(":")
     if len(parts) != 2:
         return
@@ -367,8 +328,10 @@ def _handle_staff_callback(chat_id: str, callback_data: str, callback_query_id: 
     action_label = "Acknowledged 👍" if action == "staff_ack" else "Marked as Resolved ✅"
 
     try:
+        from app.db.supabase import supabase as default_supabase
+        db_client = supabase or default_supabase
         res = (
-            supabase.table("complaints")
+            db_client.table("complaints")
             .update({"status": new_status})
             .eq("id", complaint_id)
             .execute()
@@ -386,14 +349,7 @@ def _handle_staff_callback(chat_id: str, callback_data: str, callback_query_id: 
         _answer_callback(callback_query_id, "Error updating complaint.")
 
 
-# ── Main update handler ───────────────────────────────────────────────────────
-
-def handle_staff_update(update: dict, supabase):
-    """
-    Entry point called from FastAPI staff webhook endpoint.
-    Routes messages and callback_queries to the correct handler.
-    """
-    # Handle callback_query (button presses)
+def handle_staff_update(update: dict, supabase=None):
     callback = update.get("callback_query")
     if callback:
         chat_id          = str(callback.get("from", {}).get("id", ""))
@@ -410,7 +366,6 @@ def handle_staff_update(update: dict, supabase):
             _handle_staff_callback(chat_id, callback_data, callback_query_id, message_id, supabase)
         return
 
-    # Handle regular messages
     message = update.get("message")
     if not message:
         return
@@ -425,12 +380,10 @@ def handle_staff_update(update: dict, supabase):
 
     state = _staff_state.get(chat_id, {})
 
-    # State-based handlers
     if state.get("step") == "awaiting_phone":
         _handle_phone(chat_id, text, supabase)
         return
 
-    # Command handlers
     if text.startswith("/start"):
         _start_registration(chat_id)
         return
@@ -449,14 +402,10 @@ def handle_staff_update(update: dict, supabase):
         ))
         return
 
-    # Default
     _send(chat_id, "ℹ️ Use /start to register or /mystatus to view your profile.")
 
 
-# ── Webhook setup ─────────────────────────────────────────────────────────────
-
 async def setup_staff_webhook():
-    """Called on FastAPI startup to register the staff bot webhook."""
     webhook_url = settings.STAFF_BOT_WEBHOOK_URL or ""
     if not STAFF_BOT_TOKEN or not webhook_url:
         print("[StaffBot] STAFF_BOT_TOKEN or STAFF_BOT_WEBHOOK_URL not set. Skipping webhook setup.")

@@ -1,6 +1,6 @@
 """
-pdf_processor.py
-────────────────
+app/services/pdf_processor.py
+──────────────────────────────
 Smart PDF ingestion pipeline with automatic content-type detection.
 
 Flow:
@@ -19,12 +19,6 @@ Flow:
     └── "text"    → PyPDFLoader + RecursiveCharacterTextSplitter
 
 Returns a list of dicts: [{"content": str, "metadata": dict}, ...]
-
-Prerequisites for OCR:
-  - pytesseract  (pip install pytesseract)           ← already installed
-  - PyMuPDF/fitz (pip install pymupdf)               ← already installed
-  - Tesseract binary  https://github.com/UB-Mannheim/tesseract/wiki
-      Windows default path: C:\\Program Files\\Tesseract-OCR\\tesseract.exe
 """
 
 import re
@@ -38,6 +32,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from app.core.config import settings
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 TEXT_SPLITTER = RecursiveCharacterTextSplitter(
@@ -47,41 +42,21 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
-# If tables cover this fraction of pages → classify as tabular
 TABULAR_PAGE_THRESHOLD = 0.30
-
-# Minimum cells in a table row to be considered meaningful
 MIN_ROW_CELLS = 2
-
-# Minimum extractable characters on a page before it is considered image-only.
-# Real text PDFs always have hundreds of chars per page; scanned images have ~0.
 IMAGE_CHAR_THRESHOLD = 80
-
-# Fraction of sampled pages that must fall below IMAGE_CHAR_THRESHOLD for the
-# whole PDF to be classified as 'image'.  Set high (0.60) to avoid false positives
-# on documents that mix a cover image with text pages.
 IMAGE_PAGE_THRESHOLD = 0.60
-
-# DPI used when rendering PDF pages to images for OCR
 OCR_DPI = 300
-
-# Tesseract binary path (Windows); auto-detected if on PATH
 TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
 # ── 0. Tesseract bootstrap ─────────────────────────────────────────────────────
 
 def _configure_tesseract() -> bool:
-    """
-    Point pytesseract at the Tesseract binary.
-    Returns True if Tesseract appears to be available, False otherwise.
-    """
     try:
         import pytesseract
-        # If the default Windows path exists, use it explicitly
         if os.path.isfile(TESSERACT_CMD):
             pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-        # Quick smoke-test: get version (raises if not found)
         pytesseract.get_tesseract_version()
         return True
     except Exception:
@@ -91,21 +66,11 @@ def _configure_tesseract() -> bool:
 # ── 1. Image-PDF detection ─────────────────────────────────────────────────────
 
 def _page_char_count(page) -> int:
-    """
-    Given a fitz Page, return the number of extractable text characters.
-    A scanned (image-only) page returns 0 or near-zero.
-    A normal text page returns hundreds to thousands.
-    """
     text = page.get_text("text")
     return len(text.strip())
 
 
 def is_image_based_pdf(pdf_path: str) -> bool:
-    """
-    Use PyMuPDF to sample up to 5 pages and check the text density.
-    Returns True if IMAGE_PAGE_THRESHOLD fraction of sampled pages have
-    near-zero extractable text (i.e. they are scanned images).
-    """
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(pdf_path)
@@ -114,7 +79,6 @@ def is_image_based_pdf(pdf_path: str) -> bool:
             doc.close()
             return False
 
-        # Sample evenly across the document (max 5 pages)
         sample_indices = sorted(set(
             [0] +
             [total // 4, total // 2, 3 * total // 4] +
@@ -146,23 +110,10 @@ def is_image_based_pdf(pdf_path: str) -> bool:
 # ── 2. Content-type detection (3-way) ─────────────────────────────────────────
 
 def detect_content_type(pdf_path: str) -> str:
-    """
-    Returns one of:
-      'image'   — scanned / no extractable text layer
-      'tabular' — majority of pages contain pdfplumber-detected tables
-      'text'    — standard text-based PDF
-
-    Detection order:
-      1. Image check (PyMuPDF text density)  — fastest exclusion
-      2. Table check (pdfplumber)
-      3. Fallback → text
-    """
-    # ── Step 1: image-based check ──────────────────────────────────────────────
     if is_image_based_pdf(pdf_path):
         print(f"[PDF Processor] {Path(pdf_path).name}: image-based PDF detected → 'image'")
         return "image"
 
-    # ── Step 2: tabular check ──────────────────────────────────────────────────
     try:
         import pdfplumber
         with pdfplumber.open(pdf_path) as pdf:
@@ -203,13 +154,6 @@ def process_text_pdf(
     source_name: str,
     content_type_label: str = "text",
 ) -> List[Dict[str, Any]]:
-    """
-    Standard pipeline: PyPDFLoader → filter short pages → text splitter.
-
-    Args:
-        content_type_label: stored in metadata['content_type'].
-                            Callers can pass 'ocr_text' when text came from OCR.
-    """
     loader = PyPDFLoader(pdf_path)
     pages = loader.load()
     valid = [p for p in pages if len(p.page_content.strip()) > 50]
@@ -230,7 +174,6 @@ def process_text_pdf(
 # ── 4. Tabular-mode processing ─────────────────────────────────────────────────
 
 def _clean_cell(value) -> str:
-    """Normalise a table cell: strip whitespace, collapse internal spaces."""
     if value is None:
         return ""
     s = str(value).strip()
@@ -239,32 +182,21 @@ def _clean_cell(value) -> str:
 
 
 def _reconstruct_headers(table: List[List]) -> Optional[Tuple[List[str], int]]:
-    """
-    Identify header row(s) from a pdfplumber table.
-
-    Strategy:
-    1. The first non-empty row is the header candidate.
-    2. If the *second* row also has no numeric-looking values, treat both as a
-       merged multi-row header and join them column-by-column.
-    3. Return a flat list of header strings and the data-start index.
-    """
     if not table:
         return None
 
     def _is_data_row(row: List) -> bool:
-        """A row is a data row if it has at least one purely numeric cell."""
         for cell in row:
             c = _clean_cell(cell)
             if re.match(r"^\d+(\.\d+)?$", c):
                 return True
         return False
 
-    # Find first non-empty row
     header_rows = []
     data_start = 0
     for i, row in enumerate(table):
         if all(_clean_cell(c) == "" for c in row):
-            continue  # skip blank rows
+            continue
         if not _is_data_row(row):
             header_rows.append(row)
             data_start = i + 1
@@ -273,11 +205,9 @@ def _reconstruct_headers(table: List[List]) -> Optional[Tuple[List[str], int]]:
             break
 
     if not header_rows:
-        # No distinct header found — use column indices
         n_cols = max(len(r) for r in table)
         return [f"Col{i+1}" for i in range(n_cols)], 0
 
-    # Merge multi-row headers column-by-column
     n_cols = max(len(r) for r in header_rows)
     headers = []
     for col in range(n_cols):
@@ -298,10 +228,6 @@ def _table_to_nl_sentences(
     table_idx: int,
     content_type_label: str = "tabular",
 ) -> List[Dict[str, Any]]:
-    """
-    Convert a pdfplumber table into a list of natural-language sentences,
-    one per data row.
-    """
     result = _reconstruct_headers(table)
     if result is None:
         return []
@@ -310,12 +236,10 @@ def _table_to_nl_sentences(
     chunks = []
 
     for row in table[data_start:]:
-        # Skip completely empty rows
         cells = [_clean_cell(c) for c in row]
         if not any(cells):
             continue
 
-        # Build key=value pairs, skipping blanks
         pairs = []
         for header, value in zip(headers, cells):
             if value and header:
@@ -326,7 +250,6 @@ def _table_to_nl_sentences(
 
         sentence = " | ".join(pairs)
 
-        # Detect registration-number-like fields (7-digit numbers)
         regn_match = None
         for header, value in zip(headers, cells):
             if re.match(r"^\d{7}$", value):
@@ -352,14 +275,6 @@ def process_tabular_pdf(
     source_name: str,
     content_type_label: str = "tabular",
 ) -> List[Dict[str, Any]]:
-    """
-    Tabular pipeline: pdfplumber → header reconstruction → NL sentence per row.
-    Falls back to text-mode for pages with no tables.
-
-    Args:
-        content_type_label: stored in metadata['content_type'].
-                            Callers can pass 'ocr_tabular' when text came from OCR.
-    """
     import pdfplumber
 
     all_chunks: List[Dict[str, Any]] = []
@@ -381,7 +296,6 @@ def process_tabular_pdf(
 
     print(f"[PDF Processor] Tabular mode: {len(all_chunks)} row-sentences from tables")
 
-    # Process any non-table pages as regular text
     if pages_with_no_tables:
         try:
             loader = PyPDFLoader(pdf_path)
@@ -410,28 +324,18 @@ def process_tabular_pdf(
 # ── 5. OCR-mode processing ─────────────────────────────────────────────────────
 
 def ocr_page_to_text(page, dpi: int = OCR_DPI) -> str:
-    """
-    Render a fitz (PyMuPDF) Page to an image at `dpi` and run Tesseract OCR.
-
-    Returns the extracted text string, or empty string on failure.
-    """
     try:
-        import fitz  # PyMuPDF — needed here for fitz.Matrix
+        import fitz
         import pytesseract
         from PIL import Image
 
-        # Render page to pixmap at the requested DPI.
-        # fitz.Matrix(zoom, zoom) is the correct way to build a scale matrix;
-        # page.get_matrix() returns the page's own transform and takes no args.
-        zoom = dpi / 72  # fitz native resolution is 72 DPI
+        zoom = dpi / 72
         mat = fitz.Matrix(zoom, zoom)
         pix = page.get_pixmap(matrix=mat, alpha=False)
 
-        # Convert pixmap bytes → PIL Image
         img_data = pix.tobytes("png")
         img = Image.open(io.BytesIO(img_data))
 
-        # OCR
         text = pytesseract.image_to_string(img, lang="eng")
         return text
 
@@ -441,25 +345,15 @@ def ocr_page_to_text(page, dpi: int = OCR_DPI) -> str:
 
 
 def _ocr_text_looks_tabular(ocr_text: str) -> bool:
-    """
-    Heuristic: does the OCR-reconstructed text look like a table or list?
-
-    Handles:
-    - Results tables  : many digit groups per row (marks, regn numbers)
-    - Hostel/allotment: roll no + name + room  → 2+ digit groups
-    - General lists   : consistent multi-column whitespace alignment
-    """
     lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
     if len(lines) < 3:
         return False
 
-    # Lines with consistent multi-column spacing (2+ spaces between fields)
     multi_col = sum(
         1 for l in lines
         if re.search(r"\s{2,}", l) and len(l.split()) >= 2
     )
 
-    # Lines with ≥2 numeric tokens (roll no. + room no. is enough)
     digit_rows = sum(
         1 for l in lines
         if len(re.findall(r"\b\d+\b", l)) >= 2
@@ -474,34 +368,21 @@ def _split_ocr_tabular_rows(
     page_texts: List[Tuple[int, str]],
     source_name: str,
 ) -> List[Dict[str, Any]]:
-    """
-    Row-level chunker for tabular OCR output.
-
-    Strategy:
-    - A line starting with a digit (roll no., regn no., serial no.) signals a
-      new student/data row.  Any following non-digit lines are treated as
-      continuation of that row (OCR sometimes wraps long lines).
-    - Lines with no alphanumeric content are skipped (OCR noise).
-    - Each fully assembled row → one chunk, matching the granularity of
-      process_tabular_pdf() for normal table PDFs.
-    """
     all_chunks: List[Dict[str, Any]] = []
 
     for page_num, text in page_texts:
         lines = [l.strip() for l in text.splitlines()]
-        lines = [l for l in lines if re.search(r"[A-Za-z0-9]", l)]  # drop noise
+        lines = [l for l in lines if re.search(r"[A-Za-z0-9]", l)]
 
         rows: List[str] = []
         current: List[str] = []
 
         for line in lines:
-            # A line beginning with a digit signals the start of a new data row
             if re.match(r"^\d", line):
                 if current:
                     rows.append(" | ".join(current))
                 current = [line]
             else:
-                # Header or continuation — keep as part of current row
                 current.append(line)
 
         if current:
@@ -519,7 +400,6 @@ def _split_ocr_tabular_rows(
                 "ocr": True,
             }
 
-            # Extract 7-digit registration numbers if present
             regn = re.search(r"\b(\d{7})\b", row_text)
             if regn:
                 meta["regn_no"] = regn.group(1)
@@ -530,28 +410,8 @@ def _split_ocr_tabular_rows(
 
 
 def process_image_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]:
-    """
-    OCR pipeline for image-based (scanned) PDFs.
+    import fitz
 
-    Steps:
-      1. Check Tesseract is available.
-      2. Open PDF with PyMuPDF, OCR each page.
-      3. Collect all page texts into a temporary plain-text file.
-      4. Heuristically detect if the OCR content looks tabular.
-         - If tabular → write reconstructed text to a temp PDF-like structure
-           and route through pdfplumber-style tabular processing.
-           (Because OCR text won't have actual table structures pdfplumber can
-           detect, we fall through to text mode with ocr_tabular label.)
-         - If text    → pass through RecursiveCharacterTextSplitter.
-      5. Tag all chunks with content_type = 'ocr_text' or 'ocr_tabular'.
-
-    Note: OCR output rarely contains real pdfplumber-detectable tables, so we
-    use a text-based heuristic and split accordingly while preserving the
-    correct metadata label for downstream filtering.
-    """
-    import fitz  # PyMuPDF
-
-    # ── Tesseract availability check ───────────────────────────────────────────
     if not _configure_tesseract():
         print(
             "[PDF Processor] ⚠ Tesseract not found — OCR skipped. "
@@ -561,9 +421,8 @@ def process_image_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]:
 
     print(f"[PDF Processor] Image-PDF mode: running OCR on '{Path(pdf_path).name}' …")
 
-    # ── OCR all pages ──────────────────────────────────────────────────────────
     doc = fitz.open(pdf_path)
-    page_texts: List[Tuple[int, str]] = []  # (1-based page num, ocr text)
+    page_texts: List[Tuple[int, str]] = []
 
     for page_num, page in enumerate(doc, start=1):
         text = ocr_page_to_text(page, dpi=OCR_DPI)
@@ -582,17 +441,13 @@ def process_image_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]:
     label = "ocr_tabular" if is_tabular else "ocr_text"
     print(f"[PDF Processor] OCR content classified as: '{label}'")
 
-    # ── Chunk the OCR text ─────────────────────────────────────────────────────
     if is_tabular:
-        # Row-level chunking: one chunk per student/data row — same granularity
-        # as process_tabular_pdf() for normal PDFs.
         all_chunks = _split_ocr_tabular_rows(page_texts, source_name)
         print(
             f"[PDF Processor] Image-PDF mode: {len(page_texts)} pages OCR'd "
             f"→ {len(all_chunks)} row-chunks (ocr_tabular)"
         )
     else:
-        # Prose/notice text: use RecursiveCharacterTextSplitter per page.
         all_chunks: List[Dict[str, Any]] = []
         for page_num, text in page_texts:
             if not text.strip():
@@ -626,22 +481,6 @@ def generate_pdf_metadata(
     first_text: str,
     content_type: str,
 ) -> Dict[str, str]:
-    """
-    Use a single cheap Groq LLM call (~150 tokens) to generate structured,
-    human-readable metadata for the PDF.
-
-    Args:
-        filename:     Original filename (used as fallback and context hint).
-        first_text:   First 500 chars of the first extracted chunk.
-        content_type: One of 'text', 'tabular', 'image', 'ocr_text', 'ocr_tabular'.
-
-    Returns a dict with keys:
-        title        — short human title (e.g. "Fee Payment Notice June 2026")
-        category     — doc category (e.g. "notice", "results", "allotment", "syllabus")
-        department   — dept/audience (e.g. "CSE 3rd Year", "All Students", "Unknown")
-        description  — one sentence describing the document
-        audience     — who this is for (e.g. "3rd year students", "all students")
-    """
     excerpt = first_text[:500].strip()
     prompt = f"""You are a metadata generator for a university document management system.
 
@@ -670,9 +509,7 @@ Rules:
 
     try:
         from groq import Groq
-        from dotenv import load_dotenv
-        load_dotenv(dotenv_path="../.env")
-        groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+        groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
         resp = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model="llama-3.3-70b-versatile",
@@ -689,7 +526,6 @@ Rules:
         return result
     except Exception as e:
         print(f"[PDF Processor] Metadata generation failed ({e}) — using filename fallback.")
-        # Clean up filename as best-effort title
         clean = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
         return {
             "title":       clean,
@@ -703,35 +539,6 @@ Rules:
 # ── 7. Main entry point ────────────────────────────────────────────────────────
 
 def process_pdf(pdf_path: str, source_name: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    Auto-detect and process a PDF through the correct pipeline branch,
-    then enrich every chunk's metadata with LLM-generated fields.
-
-    Args:
-        pdf_path:    Absolute or relative path to the PDF file.
-        source_name: Original filename stored in metadata['filename'].
-                     Defaults to the file's basename.
-
-    Returns:
-        List of {"content": str, "metadata": dict} — ready for embedding & upload.
-
-    Metadata fields on every chunk:
-        source       — LLM-generated human title (replaces raw filename)
-        filename     — original filename (preserved for traceability)
-        title        — same as source
-        category     — document category
-        department   — department / audience group
-        description  — one-sentence document description
-        audience     — who the document targets
-        content_type — pipeline branch used (text / tabular / ocr_text / ocr_tabular)
-        page         — page number (where applicable)
-        ocr          — True if the page was OCR-processed
-
-    Content-type routing:
-        "image"   → OCR via PyMuPDF + Tesseract → text/tabular chunks
-        "tabular" → pdfplumber table extraction  → NL sentence per row
-        "text"    → PyPDFLoader + RecursiveCharacterTextSplitter
-    """
     if source_name is None:
         source_name = Path(pdf_path).name
 
@@ -747,18 +554,14 @@ def process_pdf(pdf_path: str, source_name: Optional[str] = None) -> List[Dict[s
     if not chunks:
         return chunks
 
-    # ── LLM metadata enrichment ────────────────────────────────────────────────
-    # Use first chunk's text as the excerpt for the LLM.
     first_text = chunks[0]["content"]
     actual_content_type = chunks[0]["metadata"].get("content_type", content_type)
     llm_meta = generate_pdf_metadata(source_name, first_text, actual_content_type)
 
-    # Stamp every chunk with the rich metadata.
-    # 'source' becomes the human title so the RAG retriever surfaces it cleanly.
     for chunk in chunks:
         chunk["metadata"].update({
             "source":      llm_meta.get("title", source_name),
-            "filename":    source_name,          # original filename preserved
+            "filename":    source_name,
             "title":       llm_meta.get("title", source_name),
             "category":    llm_meta.get("category", "general"),
             "department":  llm_meta.get("department", "All Departments"),

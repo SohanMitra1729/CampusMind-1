@@ -19,8 +19,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.routers import auth, chat, notices, complaints, webhooks
-from telegram_bot import setup_webhook
-from staff_bot import setup_staff_webhook
+from app.services.telegram_bot import setup_webhook
+from app.services.staff_bot import setup_staff_webhook
 
 # ── App ────────────────────────────────────────────────────────────────────────
 

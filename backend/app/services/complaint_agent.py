@@ -1,15 +1,10 @@
 """
-complaint_agent.py — Agentic Complaint Management Pipeline
-──────────────────────────────────────────────────────────
+app/services/complaint_agent.py — Agentic Complaint Management Pipeline
+────────────────────────────────────────────────────────────────────────
 3-stage funnel:
-
   Stage 1: CLASSIFY  — LLM determines if input is a complaint (~60 tokens, Groq)
   Stage 2: ENRICH    — If hostel-related, fetch room/hostel from RAG chunks (DB only)
   Stage 3: SIMILAR   — keyword-overlap search for similar open complaints (DB only)
-
-Design goal: Stage 1 runs on /api/complaint/classify (fire-and-forget from frontend).
-             Stages 2-3 run on /api/complaint only when user explicitly submits.
-             /api/chat is NEVER touched.
 """
 
 import re
@@ -19,6 +14,8 @@ from typing import Optional, List, Dict, Any
 
 from groq import Groq
 from app.core.config import settings
+import app.repositories.document_repository as doc_repo
+import app.repositories.complaint_repository as complaint_repo
 
 groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
@@ -47,20 +44,7 @@ STATUS_LABELS = {
 # ── Stage 1: Classify ─────────────────────────────────────────────────────────
 
 def classify_complaint(text: str) -> dict:
-    """
-    Determine if the input text is a complaint or grievance.
-    Single Groq call — must stay fast (<300ms).
-
-    Returns:
-        {
-            "is_complaint": bool,
-            "category":     str,    # hostel|academic|admin|facility|mess|transport|general|not_complaint
-            "title":        str,    # short complaint title (empty if not a complaint)
-            "confidence":   float,
-            "needs_room":   bool,   # True if complaint is specific to a single room
-            "staff_role":   str,    # electrical|cleaning|mess_manager|watchmen (who should handle it)
-        }
-    """
+    """Determine if the input text is a complaint or grievance."""
     excerpt = text[:400].strip()
     prompt = f"""You are a complaint classifier for a university student portal.
 
@@ -107,7 +91,6 @@ Examples:
         raw = resp.choices[0].message.content.strip()
         raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
         result = json.loads(raw)
-        # Ensure boolean/string fields are always present and correct type
         result["needs_room"]  = bool(result.get("needs_room", False))
         result["staff_role"]  = result.get("staff_role", "watchmen") or "watchmen"
         if result["staff_role"] == "none":
@@ -128,18 +111,9 @@ Examples:
         }
 
 
-import app.repositories.document_repository as doc_repo
-
-
 # ── Stage 2: Hostel enrichment ────────────────────────────────────────────────
 
 def enrich_hostel_details(scholar_id: str) -> dict:
-    """
-    Query the RAG documents table for the student's hostel allotment chunk.
-    Works because hostel allotment PDFs are ingested with metadata.regn_no set.
-
-    Returns a dict of parsed hostel details, or {} if not found.
-    """
     if not scholar_id:
         return {}
     chunk = doc_repo.find_hostel_allotment_chunk(scholar_id)
@@ -161,23 +135,13 @@ def enrich_hostel_details(scholar_id: str) -> dict:
     return details
 
 
-import app.repositories.complaint_repository as complaint_repo
-
-
 # ── Stage 3: Similar complaint search ────────────────────────────────────────
 
 def find_similar_complaints(complaint_text: str, complaint_title: str, category: str) -> List[dict]:
-    """
-    Find existing open complaints similar to the new one.
-    Uses keyword overlap on title + same category filter.
-    Returns list of {id, title, vote_count, description, similarity}.
-    """
     try:
         complaints = complaint_repo.get_open_complaints_for_similarity(limit=30)
 
-        # Word-overlap similarity between new complaint and existing titles+descriptions
         input_words = set(re.findall(r"\b\w{3,}\b", (complaint_text + " " + complaint_title).lower()))
-        # Remove common stop words
         stop_words = {"the", "is", "my", "our", "was", "are", "has", "have", "not",
                       "this", "that", "for", "with", "from", "please", "and", "but"}
         input_words -= stop_words
@@ -217,19 +181,10 @@ def process_complaint(
     hostel_id: Optional[str] = None,
     room_number: Optional[str] = None,
 ) -> dict:
-    """
-    Full agentic complaint pipeline:
-      1. Classify  (LLM — fast)
-      2. Similar   (DB keyword search)
-      3. Enrich    (DB hostel lookup — only if hostel category)
-      4. Save      (Supabase insert)
-      5. Forward   (staff_bot — route to matching staff)
-    """
     user_id    = user_info.get("id")
     scholar_id = user_info.get("scholar_id") or ""
     name       = user_info.get("name") or "Student"
 
-    # ── Stage 1: Classify ──────────────────────────────────────────────────────
     classification = classify_complaint(text)
     if not classification.get("is_complaint"):
         return {
@@ -239,18 +194,15 @@ def process_complaint(
 
     category   = classification.get("category", "general")
     title      = classification.get("title") or text[:60].strip()
-    staff_role = classification.get("staff_role")  # LLM-determined, e.g. "electrical"
+    staff_role = classification.get("staff_role")
 
-    # ── Stage 2: Similar complaints ────────────────────────────────────────────
     similar = find_similar_complaints(text, title, category)
     print(f"[ComplaintAgent] Found {len(similar)} similar complaint(s)")
 
-    # ── Stage 3: Hostel enrichment ─────────────────────────────────────────────
     hostel_details: dict = {}
     if category == "hostel":
         hostel_details = enrich_hostel_details(scholar_id)
 
-    # ── Stage 4: Persist complaint ─────────────────────────────────────────────
     insert_data = {
         "user_id":        user_id,
         "scholar_id":     scholar_id or None,
@@ -268,17 +220,14 @@ def process_complaint(
     complaint_row = complaint_repo.create_complaint(insert_data)
     complaint_id  = complaint_row.get("id")
 
-    # Record that this user is the first "voter" on their own complaint
     if complaint_id and user_id:
         complaint_repo.record_vote(complaint_id, user_id, scholar_id)
 
     print(f"[ComplaintAgent] Complaint saved: '{title}' [{category}] id={complaint_id}")
 
-    # ── Stage 5: Forward to staff via staff_bot ───────────────────────────────
     if complaint_id:
         try:
-            from staff_bot import send_complaint_to_staff
-            # Look up hostel name if hostel_id supplied
+            from app.services.staff_bot import send_complaint_to_staff
             hostel_name = "Unknown Hostel"
             if hostel_id:
                 hostel = complaint_repo.get_hostel_by_id(hostel_id)
@@ -310,21 +259,13 @@ def process_complaint(
 # ── Vote on an existing complaint ─────────────────────────────────────────────
 
 def vote_on_complaint(complaint_id: str, user_info: dict) -> dict:
-    """
-    Record that a student agrees with / has the same issue as an existing complaint.
-    Increments vote_count atomically.
-    Returns updated complaint or raises if vote already cast.
-    """
     user_id    = user_info.get("id")
     scholar_id = user_info.get("scholar_id") or ""
 
     if complaint_repo.has_user_voted(complaint_id, user_id):
         return {"error": "already_voted", "message": "You have already voted on this complaint."}
 
-    # Insert vote record
     complaint_repo.record_vote(complaint_id, user_id, scholar_id)
-
-    # Increment vote_count
     new_count = complaint_repo.increment_vote_count(complaint_id)
     print(f"[ComplaintAgent] Vote recorded on {complaint_id}: count now {new_count}")
     return {
