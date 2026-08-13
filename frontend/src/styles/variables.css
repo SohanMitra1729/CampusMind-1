@@ -1,0 +1,107 @@
+/* ── CampusMind Design System Variables & Base Tokens ── */
+
+:root {
+  /* ── Legacy Variables (Backward Compatibility) ── */
+  --bg-color: #09090b;
+  --text-color: #f8fafc;
+  --primary: #ffffff;
+  --primary-hover: #e2e8f0;
+  --surface: #18181b;
+  --surface-border: #27272a;
+  --user-msg: #27272a;
+  --bot-msg: transparent;
+
+  /* ── CampusMind Token Palette ── */
+  --cm-bg: #0b0f19;
+  --cm-fg: #f8fafc;
+  --cm-muted: #94a3b8;
+  --cm-muted-bg: #1e293b;
+  --cm-border: #334155;
+  --cm-primary: #ffffff;
+  --cm-primary-fg: #000000;
+  --cm-secondary: #1e293b;
+  --cm-secondary-fg: #fafafa;
+  --cm-accent: #3b82f6;
+  --cm-accent-fg: #ffffff;
+  --cm-success: #10b981;
+  --cm-warning: #f59e0b;
+  --cm-error: #ef4444;
+  --cm-info: #3b82f6;
+
+  /* Typography Scale */
+  --font-sans: 'Inter', 'Geist', 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+
+  /* Font Weights */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* Spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+
+  /* Border Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
+  /* Elevation */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.15);
+
+  /* Animation Timings */
+  --transition-fast: 150ms cubic-bezier(.22,.61,.36,1);
+  --transition-normal: 180ms cubic-bezier(.22,.61,.36,1);
+}
+
+/* Base Body Resets */
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--cm-bg);
+  color: var(--cm-fg);
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  justify-content: center;
+  position: relative;
+  overscroll-behavior: none;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(circle at center, transparent 0%, var(--cm-bg) 100%);
+  pointer-events: none;
+}
+
+#root {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
