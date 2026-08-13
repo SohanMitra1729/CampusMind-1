@@ -2,8 +2,7 @@
  * src/components/chat/MessageList.jsx — Messages Feed, Quick Actions & RAG Sources
  */
 
-import { Sparkles, User as UserIcon, Loader2, Calendar, Home, BellRing, AlertCircle, CheckCircle2, Send } from 'lucide-react';
-import { Badge } from '../ui/Badge';
+import { Sparkles, Loader2, Calendar, Home, BellRing, AlertCircle, CheckCircle2, Send } from 'lucide-react';
 
 export default function MessageList({
   messages,
@@ -15,35 +14,40 @@ export default function MessageList({
   messagesEndRef,
 }) {
   return (
-    <div className="chat-messages-scroll-area">
-      <div className="chat-messages-container">
+    <div className="chat-messages-scroll">
+      <div className="chat-messages-inner">
         {messages.length === 0 && (
-          <div className="chat-welcome-hero">
-            <div className="welcome-icon-hero">✨</div>
-            <h1>Welcome to CampusMind</h1>
-            <p>Your intelligent campus AI assistant for knowledge, notices, and complaints.</p>
+          <div className="chat-empty-state">
+            <div className="chat-empty-logo">
+              <Sparkles size={36} />
+            </div>
+            <h1 className="chat-empty-title">Welcome to CampusMind</h1>
+            <p className="chat-empty-desc">
+              Your intelligent campus AI assistant for knowledge, notices, and complaints.
+            </p>
           </div>
         )}
 
         {messages.map((msg) => (
-          <div key={msg.id} className={`chat-message-row ${msg.role === 'user' ? 'user-row' : 'bot-row'}`}>
-            <div className="message-avatar">
-              {msg.role === 'user' ? <UserIcon size={18} /> : <Sparkles size={18} />}
-            </div>
-            <div className="message-content-box">
-              <div className="message-author">{msg.role === 'user' ? 'You' : 'CampusMind AI'}</div>
-              <div className="message-text">{msg.content}</div>
+          <div key={msg.id} className={`chat-bubble-row ${msg.role === 'user' ? 'user' : 'bot'}`}>
+            <div className={`chat-bubble ${msg.role === 'user' ? 'user' : 'bot'}`}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '4px', opacity: 0.8 }}>
+                {msg.role === 'user' ? 'You' : 'CampusMind AI'}
+              </div>
+              <p style={{ margin: 0, whitespace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</p>
 
               {msg.metadata?.sources && msg.metadata.sources.length > 0 && (
-                <div className="message-sources-box">
-                  <div className="sources-title">Sources consulted:</div>
-                  <div className="sources-list">
-                    {msg.metadata.sources.map((src, i) => (
-                      <Badge key={i} variant="secondary" className="source-badge">
+                <div className="chat-sources">
+                  <span style={{ fontSize: 'var(--text-xs)', fontWeight: 'var(--font-semibold)', color: 'var(--cm-muted)' }}>
+                    Sources consulted:
+                  </span>
+                  {msg.metadata.sources.map((src, i) => (
+                    <div key={i} className="chat-source-item">
+                      <span className="chat-source-badge">
                         📄 {src.source || 'Document'} {src.page ? `(p. ${src.page})` : ''}
-                      </Badge>
-                    ))}
-                  </div>
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -51,13 +55,9 @@ export default function MessageList({
         ))}
 
         {isLoading && (
-          <div className="chat-message-row bot-row">
-            <div className="message-avatar">
-              <Sparkles size={18} />
-            </div>
-            <div className="message-content-box">
-              <div className="message-author">CampusMind AI</div>
-              <div className="thinking-indicator">
+          <div className="chat-bubble-row bot">
+            <div className="chat-bubble bot">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--cm-muted)', fontSize: '0.875rem' }}>
                 <Loader2 className="animate-spin cm-icon-sm" /> Thinking...
               </div>
             </div>
