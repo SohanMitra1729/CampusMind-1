@@ -3,6 +3,7 @@
  */
 
 import { useState } from 'react';
+import { Menu } from 'lucide-react';
 import Sidebar from '../components/chat/Sidebar';
 import MessageList from '../components/chat/MessageList';
 import ComplaintBanner from '../components/chat/ComplaintBanner';
@@ -54,7 +55,6 @@ export default function ChatPage({ user, onLogout }) {
     chatSessions,
     activeChatId,
     input,
-    setInput,
     handleInputChange,
     isLoading,
     messagesEndRef,
@@ -105,6 +105,16 @@ export default function ChatPage({ user, onLogout }) {
       </Sidebar>
 
       <main className="chat-main">
+        <header className="chat-header-bar">
+          <button className="sidebar-hamburger-btn" onClick={() => setSidebarOpen(true)}>
+            <Menu size={20} />
+          </button>
+          <div className="chat-header-center">
+            <div className="chat-header-title">CampusMind AI</div>
+            <div className="chat-header-subtitle">NIT Silchar Knowledge & Complaint Network</div>
+          </div>
+        </header>
+
         <ComplaintBanner
           complaintPending={complaintPending}
           setComplaintPending={setComplaintPending}

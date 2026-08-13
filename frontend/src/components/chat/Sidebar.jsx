@@ -2,8 +2,7 @@
  * src/components/chat/Sidebar.jsx — Chat History & Navigation Sidebar
  */
 
-import { Plus, MessageSquare, Trash2, LogOut, ChevronDown, Menu, X } from 'lucide-react';
-import { Button } from '../ui/Button';
+import { Plus, MessageSquare, Trash2, LogOut, ChevronDown, Sparkles, X } from 'lucide-react';
 
 export default function Sidebar({
   user,
@@ -20,43 +19,55 @@ export default function Sidebar({
 }) {
   return (
     <>
-      <button className="chat-mobile-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-        {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-      </button>
+      {sidebarOpen && (
+        <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+      )}
 
-      <aside className={`chat-sidebar ${sidebarOpen ? 'mobile-open' : ''}`}>
-        <div className="sidebar-header">
-          <div className="sidebar-logo">
-            <span className="logo-sparkle">✨</span>
-            <span className="logo-text">CampusMind</span>
-          </div>
-          <Button variant="secondary" className="new-chat-btn" onClick={onNewChat}>
-            <Plus size={18} /> New Chat
-          </Button>
+      <aside className={`chat-sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+        <button className="sidebar-close-btn" onClick={() => setSidebarOpen(false)}>
+          <X size={20} />
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+          <Sparkles size={22} className="text-blue-400" />
+          <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#f8fafc' }}>CampusMind</span>
         </div>
 
-        <div className="sidebar-section-title">Navigation & Tools</div>
-        <div className="sidebar-history-list" style={{ flex: '0 0 auto', paddingBottom: 0 }}>
-          <button className="history-item" onClick={onOpenMyComplaints}>
+        <button className="new-chat-btn" onClick={onNewChat}>
+          <Plus size={18} /> New Chat
+        </button>
+
+        <div style={{ margin: '16px 0 8px', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Navigation & Tools
+        </div>
+        
+        <button className="my-complaints-btn" onClick={onOpenMyComplaints}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <MessageSquare size={16} /> My Complaints
-          </button>
+          </div>
+        </button>
+
+        <div style={{ margin: '16px 0 8px', fontSize: '0.75rem', fontWeight: 'bold', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Recent Conversations
         </div>
 
-        <div className="sidebar-section-title" style={{ marginTop: 'var(--space-4)' }}>Recent Conversations</div>
-        <div className="sidebar-history-list">
+        <div className="chat-history-container">
           {chatSessions.length === 0 ? (
-            <div className="history-empty">No past conversations</div>
+            <div style={{ fontSize: '0.8rem', color: '#64748b', padding: '8px 0' }}>No past conversations</div>
           ) : (
             chatSessions.map((chat) => (
               <div
                 key={chat.id}
-                className={`history-item ${activeChatId === chat.id ? 'active' : ''}`}
-                onClick={() => onLoadChat(chat.id)}
+                className={`chat-history-item ${activeChatId === chat.id ? 'active' : ''}`}
+                onClick={() => {
+                  onLoadChat(chat.id);
+                  setSidebarOpen(false);
+                }}
               >
-                <MessageSquare size={16} />
-                <span className="history-title">{chat.title}</span>
+                <MessageSquare size={16} style={{ flexShrink: 0, marginRight: '8px' }} />
+                <span className="chat-history-text">{chat.title}</span>
                 <button
-                  className="history-delete-btn"
+                  className="chat-delete-btn"
                   onClick={(e) => onDeleteChat(e, chat.id)}
                   title="Delete chat"
                 >
@@ -67,29 +78,23 @@ export default function Sidebar({
           )}
         </div>
 
-        <div className="sidebar-profile-row">
-          <div className="user-profile-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+        <div className="sidebar-bottom-container">
+          <div className="sidebar-profile-row">
+            <div className="user-profile-header">
               <div className="user-avatar-circle">
-                {user?.name ? user.name.charAt(0) : '?'}
+                {user?.name ? user.name.charAt(0).toUpperCase() : '?'}
               </div>
-              <div style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--font-medium)', whiteSpace: 'nowrap' }}>
-                {user?.name || 'User'}
+              <div className="user-details">
+                <span className="user-name">{user?.name || 'User'}</span>
+                <span className="user-scholar">{user?.scholar_id || 'Student'}</span>
               </div>
             </div>
-            <ChevronDown className="cm-icon-sm text-[var(--cm-muted)]" />
+            {children}
           </div>
 
-          {children}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onLogout}
-            style={{ width: '100%', marginTop: 'var(--space-2)', color: 'var(--cm-error)' }}
-          >
-            <LogOut size={16} style={{ marginRight: '8px' }} /> Sign Out
-          </Button>
+          <button className="logout-btn" onClick={onLogout} style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <LogOut size={16} /> Sign Out
+          </button>
         </div>
       </aside>
     </>
