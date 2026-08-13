@@ -9,11 +9,12 @@ Encapsulates RAG pipeline:
 """
 
 import os
-import requests
+import httpx
 from typing import Any, Dict, List, Optional
 from groq import Groq
 
 from app.core.config import settings
+from app.core.logger import logger
 from app.db.supabase import supabase
 import app.repositories.document_repository as doc_repo
 
@@ -24,7 +25,7 @@ groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 
 def get_gemini_embedding(text: str) -> List[float]:
-    """Call Google Gemini Embeddings API directly to fetch 3072-dim vector."""
+    """Call Google Gemini Embeddings API directly to fetch 3072-dim vector via httpx."""
     api_key = settings.GOOGLE_API_KEY
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
     payload = {
@@ -32,10 +33,11 @@ def get_gemini_embedding(text: str) -> List[float]:
         "content": {"parts": [{"text": text}]},
         "outputDimensionality": 3072
     }
-    response = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=20)
-    response.raise_for_status()
-    data = response.json()
-    return data["embedding"]["values"]
+    with httpx.Client(timeout=20.0) as client:
+        response = client.post(url, json=payload, headers={"Content-Type": "application/json"})
+        response.raise_for_status()
+        data = response.json()
+        return data["embedding"]["values"]
 
 
 def hybrid_search(
@@ -56,7 +58,7 @@ def hybrid_search(
             filter_metadata=filter_metadata,
         )
     except Exception as e:
-        print(f"[RAG] hybrid_search error: {e}")
+        logger.error(f"[RAG] hybrid_search error: {e}")
         return []
 
 

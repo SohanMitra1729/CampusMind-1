@@ -131,7 +131,15 @@ def record_vote(complaint_id: str, user_id: str, scholar_id: Optional[str] = Non
 
 
 def increment_vote_count(complaint_id: str) -> int:
-    """Fetch current vote count, increment by 1, update row, and return new count."""
+    """Atomically increment vote_count via PostgreSQL RPC stored procedure with fallback."""
+    try:
+        res = supabase.rpc("increment_complaint_vote", {"target_complaint_id": complaint_id}).execute()
+        if res.data is not None:
+            return int(res.data)
+    except Exception:
+        pass
+
+    # Fallback to read-and-update if RPC is not present
     current = (
         supabase.table("complaints")
         .select("vote_count")

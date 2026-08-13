@@ -17,6 +17,8 @@ from app.core.config import settings
 import app.repositories.document_repository as doc_repo
 import app.repositories.complaint_repository as complaint_repo
 
+from app.core.logger import logger
+
 groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 COMPLAINT_CATEGORIES = {

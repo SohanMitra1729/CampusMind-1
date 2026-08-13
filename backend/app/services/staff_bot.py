@@ -2,16 +2,18 @@
 app/services/staff_bot.py — Dedicated Telegram Bot for Staff Members
 ────────────────────────────────────────────────────────────────────
 Staff roles supported: electrical | cleaning | mess_manager | watchmen
+Features DB-backed persistent session state and httpx communication.
 """
 
 import os
 import re
 import json
-import requests
 import httpx
 from typing import Optional, Dict, Any, List
 
 from app.core.config import settings
+from app.core.logger import logger
+from app.db.supabase import supabase
 
 STAFF_BOT_TOKEN = settings.STAFF_BOT_TOKEN or ""
 STAFF_TELEGRAM_API = f"https://api.telegram.org/bot{STAFF_BOT_TOKEN}"
@@ -37,13 +39,47 @@ ROLE_LABELS: Dict[str, str] = {
     "watchmen":     "Watchmen / Security",
 }
 
-_staff_state: Dict[str, Dict[str, Any]] = {}
+_staff_state_fallback: Dict[str, Dict[str, Any]] = {}
+
+
+# ── DB-backed Persistent Session Helpers ───────────────────────────────────────
+
+def _get_staff_state(chat_id: str) -> Dict[str, Any]:
+    """Retrieve active session state for staff chat_id."""
+    try:
+        res = supabase.table("bot_sessions").select("data").eq("chat_id", f"staff:{chat_id}").execute()
+        if res.data and res.data[0]:
+            return res.data[0].get("data") or {}
+    except Exception:
+        pass
+    return _staff_state_fallback.get(str(chat_id), {})
+
+
+def _set_staff_state(chat_id: str, state_dict: Optional[Dict[str, Any]]):
+    """Set or clear active staff registration state."""
+    key = str(chat_id)
+    if state_dict is None:
+        _staff_state_fallback.pop(key, None)
+        try:
+            supabase.table("bot_sessions").delete().eq("chat_id", f"staff:{key}").execute()
+        except Exception:
+            pass
+    else:
+        _staff_state_fallback[key] = state_dict
+        try:
+            supabase.table("bot_sessions").upsert({
+                "chat_id": f"staff:{key}",
+                "state": state_dict.get("step"),
+                "data": state_dict,
+            }, on_conflict="chat_id").execute()
+        except Exception:
+            pass
 
 
 def _send(chat_id: str, text: str, parse_mode: str = "Markdown",
           reply_markup: Optional[Dict] = None):
     if not STAFF_BOT_TOKEN:
-        print("[StaffBot] STAFF_BOT_TOKEN not set. Message not sent.")
+        logger.info("[StaffBot] STAFF_BOT_TOKEN not set. Message not sent.")
         return
     payload: Dict[str, Any] = {
         "chat_id": chat_id,
@@ -53,36 +89,37 @@ def _send(chat_id: str, text: str, parse_mode: str = "Markdown",
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
-        requests.post(f"{STAFF_TELEGRAM_API}/sendMessage", json=payload, timeout=5)
+        with httpx.Client(timeout=5.0) as client:
+            client.post(f"{STAFF_TELEGRAM_API}/sendMessage", json=payload)
     except Exception as e:
-        print(f"[StaffBot] send error: {e}")
+        logger.error(f"[StaffBot] send error: {e}")
 
 
 def _answer_callback(callback_query_id: str, text: str = ""):
     if not STAFF_BOT_TOKEN:
         return
     try:
-        requests.post(
-            f"{STAFF_TELEGRAM_API}/answerCallbackQuery",
-            json={"callback_query_id": callback_query_id, "text": text},
-            timeout=5,
-        )
+        with httpx.Client(timeout=5.0) as client:
+            client.post(
+                f"{STAFF_TELEGRAM_API}/answerCallbackQuery",
+                json={"callback_query_id": callback_query_id, "text": text},
+            )
     except Exception as e:
-        print(f"[StaffBot] answer_callback error: {e}")
+        logger.error(f"[StaffBot] answer_callback error: {e}")
 
 
 def _edit_message_text(chat_id: str, message_id: int, text: str, parse_mode: str = "Markdown"):
     if not STAFF_BOT_TOKEN:
         return
     try:
-        requests.post(
-            f"{STAFF_TELEGRAM_API}/editMessageText",
-            json={"chat_id": chat_id, "message_id": message_id,
-                  "text": text, "parse_mode": parse_mode},
-            timeout=5,
-        )
+        with httpx.Client(timeout=5.0) as client:
+            client.post(
+                f"{STAFF_TELEGRAM_API}/editMessageText",
+                json={"chat_id": chat_id, "message_id": message_id,
+                      "text": text, "parse_mode": parse_mode},
+            )
     except Exception as e:
-        print(f"[StaffBot] edit_message error: {e}")
+        logger.error(f"[StaffBot] edit_message error: {e}")
 
 
 def _hostel_keyboard(hostels: List[Dict]) -> Dict:
@@ -113,20 +150,22 @@ def _role_keyboard() -> Dict:
 
 
 def _start_registration(chat_id: str):
-    _staff_state[chat_id] = {"step": "awaiting_phone"}
+    _set_staff_state(chat_id, {"step": "awaiting_phone"})
     _send(chat_id, (
         "👋 Welcome to *CampusMind Staff Portal*!\n\n"
         "To register, please share your phone number (e.g. *+919876543210*):"
     ))
 
 
-def _handle_phone(chat_id: str, text: str, supabase):
+def _handle_phone(chat_id: str, text: str, _db=None):
     phone = text.strip()
     if not re.match(r"^\+?\d{10,15}$", phone):
         _send(chat_id, "⚠️ Invalid phone number. Please enter a valid number (e.g. +919876543210):")
         return
-    _staff_state[chat_id]["phone"] = phone
-    _staff_state[chat_id]["step"] = "awaiting_hostel"
+    
+    state = _get_staff_state(chat_id)
+    state["phone"] = phone
+    state["step"] = "awaiting_hostel"
 
     try:
         res = supabase.table("hostels").select("id, name, code").order("code").execute()
@@ -136,32 +175,33 @@ def _handle_phone(chat_id: str, text: str, supabase):
 
     if not hostels:
         _send(chat_id, "⚠️ No hostels found in the system. Please contact administration.")
-        _staff_state.pop(chat_id, None)
+        _set_staff_state(chat_id, None)
         return
 
-    _staff_state[chat_id]["hostels"] = hostels
+    state["hostels"] = hostels
+    _set_staff_state(chat_id, state)
     _send(chat_id, "🏠 Which hostel do you work at?", reply_markup=_hostel_keyboard(hostels))
 
 
 def _handle_hostel_callback(chat_id: str, hostel_id: str, hostel_code: str):
-    state = _staff_state.get(chat_id, {})
+    state = _get_staff_state(chat_id)
     state["hostel_id"] = hostel_id
     state["hostel_code"] = hostel_code
     state["step"] = "awaiting_role"
-    _staff_state[chat_id] = state
+    _set_staff_state(chat_id, state)
     _send(chat_id, f"✅ Hostel *{hostel_code}* selected.\n\n🔧 What is your role?",
           reply_markup=_role_keyboard())
 
 
-def _handle_role_callback(chat_id: str, role: str, supabase):
-    state = _staff_state.get(chat_id, {})
+def _handle_role_callback(chat_id: str, role: str, _db=None):
+    state = _get_staff_state(chat_id)
     phone = state.get("phone")
     hostel_id = state.get("hostel_id")
     hostel_code = state.get("hostel_code", "")
 
     if not phone or not hostel_id:
         _send(chat_id, "⚠️ Registration session expired. Please send /start to begin again.")
-        _staff_state.pop(chat_id, None)
+        _set_staff_state(chat_id, None)
         return
 
     try:
@@ -173,7 +213,7 @@ def _handle_role_callback(chat_id: str, role: str, supabase):
             "active":           True,
         }, on_conflict="phone_number").execute()
 
-        _staff_state.pop(chat_id, None)
+        _set_staff_state(chat_id, None)
         role_label = ROLE_LABELS.get(role, role)
         role_icon  = ROLE_ICONS.get(role, "🔧")
         _send(chat_id, (
@@ -187,12 +227,12 @@ def _handle_role_callback(chat_id: str, role: str, supabase):
             f"• /start — Update registration"
         ))
     except Exception as e:
-        print(f"[StaffBot] registration error: {e}")
+        logger.error(f"[StaffBot] registration error: {e}")
         _send(chat_id, "❌ Registration failed. Please try again with /start.")
-        _staff_state.pop(chat_id, None)
+        _set_staff_state(chat_id, None)
 
 
-def _handle_my_status(chat_id: str, supabase):
+def _handle_my_status(chat_id: str, _db=None):
     try:
         res = (
             supabase.table("staff_members")
@@ -218,7 +258,7 @@ def _handle_my_status(chat_id: str, supabase):
             f"To update, send /start again."
         ))
     except Exception as e:
-        print(f"[StaffBot] _handle_my_status error: {e}")
+        logger.error(f"[StaffBot] _handle_my_status error: {e}")
         _send(chat_id, "❌ Could not fetch your profile.")
 
 
@@ -231,26 +271,24 @@ def send_complaint_to_staff(
     hostel_name: str,
     room_number: Optional[str],
     student_name: str,
-    supabase=None,
+    _db=None,
     staff_role: Optional[str] = None,
 ):
     if not STAFF_BOT_TOKEN:
-        print("[StaffBot] STAFF_BOT_TOKEN not set. Complaint not forwarded.")
+        logger.info("[StaffBot] STAFF_BOT_TOKEN not set. Complaint not forwarded.")
         return
 
     role = staff_role or CATEGORY_TO_ROLE.get(category, "watchmen")
     if not role:
-        print(f"[StaffBot] No staff role determined for category={category}. Skipping forward.")
+        logger.info(f"[StaffBot] No staff role determined for category={category}. Skipping forward.")
         return
 
-    print(f"[StaffBot] Routing complaint to role={role} (staff_role={staff_role}, category={category})")
+    logger.info(f"[StaffBot] Routing complaint to role={role} (staff_role={staff_role}, category={category})")
 
     staff_list = []
     try:
-        from app.db.supabase import supabase as default_supabase
-        db_client = supabase or default_supabase
         query = (
-            db_client.table("staff_members")
+            supabase.table("staff_members")
             .select("telegram_chat_id, role, hostel_id")
             .eq("role", role)
             .eq("active", True)
@@ -259,28 +297,26 @@ def send_complaint_to_staff(
             query = query.eq("hostel_id", hostel_id)
         res = query.execute()
         staff_list = res.data or []
-        print(f"[StaffBot] Pass 1 (role={role}, hostel={hostel_id}): found {len(staff_list)} staff")
+        logger.info(f"[StaffBot] Pass 1 (role={role}, hostel={hostel_id}): found {len(staff_list)} staff")
     except Exception as e:
-        print(f"[StaffBot] staff query error (pass 1): {e}")
+        logger.error(f"[StaffBot] staff query error (pass 1): {e}")
 
     if not staff_list and hostel_id:
         try:
-            from app.db.supabase import supabase as default_supabase
-            db_client = supabase or default_supabase
             res2 = (
-                db_client.table("staff_members")
+                supabase.table("staff_members")
                 .select("telegram_chat_id, role, hostel_id")
                 .eq("role", role)
                 .eq("active", True)
                 .execute()
             )
             staff_list = res2.data or []
-            print(f"[StaffBot] Pass 2 fallback (role={role}, any hostel): found {len(staff_list)} staff")
+            logger.info(f"[StaffBot] Pass 2 fallback (role={role}, any hostel): found {len(staff_list)} staff")
         except Exception as e:
-            print(f"[StaffBot] staff query error (pass 2): {e}")
+            logger.error(f"[StaffBot] staff query error (pass 2): {e}")
 
     if not staff_list:
-        print(f"[StaffBot] No active staff found for role={role} in any hostel. Cannot forward complaint.")
+        logger.warning(f"[StaffBot] No active staff found for role={role} in any hostel. Cannot forward complaint.")
         return
 
     location_line = f"🏠 Hostel: *{hostel_name}*"
@@ -314,11 +350,11 @@ def send_complaint_to_staff(
         if chat_id:
             _send(chat_id, msg, reply_markup=keyboard)
 
-    print(f"[StaffBot] Complaint {complaint_id} forwarded to {len(staff_list)} staff member(s).")
+    logger.info(f"[StaffBot] Complaint {complaint_id} forwarded to {len(staff_list)} staff member(s).")
 
 
 def _handle_staff_callback(chat_id: str, callback_data: str, callback_query_id: str,
-                            message_id: int, supabase=None):
+                            message_id: int, _db=None):
     parts = callback_data.split(":")
     if len(parts) != 2:
         return
@@ -328,10 +364,8 @@ def _handle_staff_callback(chat_id: str, callback_data: str, callback_query_id: 
     action_label = "Acknowledged 👍" if action == "staff_ack" else "Marked as Resolved ✅"
 
     try:
-        from app.db.supabase import supabase as default_supabase
-        db_client = supabase or default_supabase
         res = (
-            db_client.table("complaints")
+            supabase.table("complaints")
             .update({"status": new_status})
             .eq("id", complaint_id)
             .execute()
@@ -345,11 +379,11 @@ def _handle_staff_callback(chat_id: str, callback_data: str, callback_query_id: 
         else:
             _answer_callback(callback_query_id, "Complaint not found.")
     except Exception as e:
-        print(f"[StaffBot] callback update error: {e}")
+        logger.error(f"[StaffBot] callback update error: {e}")
         _answer_callback(callback_query_id, "Error updating complaint.")
 
 
-def handle_staff_update(update: dict, supabase=None):
+def handle_staff_update(update: dict, _db=None):
     callback = update.get("callback_query")
     if callback:
         chat_id          = str(callback.get("from", {}).get("id", ""))
@@ -361,9 +395,9 @@ def handle_staff_update(update: dict, supabase=None):
             parts = callback_data.split(":")
             _handle_hostel_callback(chat_id, parts[1], parts[2])
         elif callback_data.startswith("role:"):
-            _handle_role_callback(chat_id, callback_data.split(":")[1], supabase)
+            _handle_role_callback(chat_id, callback_data.split(":")[1])
         elif callback_data.startswith("staff_ack:") or callback_data.startswith("staff_resolve:"):
-            _handle_staff_callback(chat_id, callback_data, callback_query_id, message_id, supabase)
+            _handle_staff_callback(chat_id, callback_data, callback_query_id, message_id)
         return
 
     message = update.get("message")
@@ -376,12 +410,12 @@ def handle_staff_update(update: dict, supabase=None):
     if not chat_id or not text:
         return
 
-    print(f"[StaffBot] Message from {chat_id}: {text[:60]}")
+    logger.info(f"[StaffBot] Message from {chat_id}: {text[:60]}")
 
-    state = _staff_state.get(chat_id, {})
+    state = _get_staff_state(chat_id)
 
     if state.get("step") == "awaiting_phone":
-        _handle_phone(chat_id, text, supabase)
+        _handle_phone(chat_id, text)
         return
 
     if text.startswith("/start"):
@@ -389,7 +423,7 @@ def handle_staff_update(update: dict, supabase=None):
         return
 
     if text.startswith("/mystatus"):
-        _handle_my_status(chat_id, supabase)
+        _handle_my_status(chat_id)
         return
 
     if text.startswith("/help"):
@@ -408,7 +442,7 @@ def handle_staff_update(update: dict, supabase=None):
 async def setup_staff_webhook():
     webhook_url = settings.STAFF_BOT_WEBHOOK_URL or ""
     if not STAFF_BOT_TOKEN or not webhook_url:
-        print("[StaffBot] STAFF_BOT_TOKEN or STAFF_BOT_WEBHOOK_URL not set. Skipping webhook setup.")
+        logger.info("[StaffBot] STAFF_BOT_TOKEN or STAFF_BOT_WEBHOOK_URL not set. Skipping webhook setup.")
         return
     try:
         async with httpx.AsyncClient() as client:
@@ -417,6 +451,6 @@ async def setup_staff_webhook():
                 json={"url": webhook_url}
             )
             res.raise_for_status()
-            print(f"[StaffBot] Webhook registered: {res.json()}")
+            logger.info(f"[StaffBot] Webhook registered: {res.json()}")
     except Exception as e:
-        print(f"[StaffBot] Failed to set webhook: {e}")
+        logger.error(f"[StaffBot] Failed to set webhook: {e}")
