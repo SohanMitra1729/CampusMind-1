@@ -8,8 +8,8 @@ import { Button } from '../components/ui/Button';
 import DocumentIngestion from '../components/admin/DocumentIngestion';
 import NoticeBroadcast from '../components/admin/NoticeBroadcast';
 import ComplaintManagement from '../components/admin/ComplaintManagement';
+import { useAdminComplaints } from '../hooks/useAdminComplaints';
 import { uploadDocumentApi, getDocumentsApi, deleteDocumentApi, postNoticeApi, getNoticesListApi } from '../api/notices';
-import { getAdminComplaintsApi, updateComplaintStatusApi } from '../api/complaints';
 
 const NOTICE_TYPE_LABELS = {
   holiday:        { label: 'Holiday',        icon: '🏖️', color: 'emerald' },
@@ -44,12 +44,18 @@ export default function AdminPage({ onBack }) {
   const [postedNotices, setPostedNotices] = useState([]);
   const [isLoadingNotices, setIsLoadingNotices] = useState(false);
 
-  // ── Complaints state ──
-  const [complaints, setComplaints] = useState([]);
-  const [isLoadingComplaints, setIsLoadingComplaints] = useState(false);
-  const [complaintStatusFilter, setComplaintStatusFilter] = useState('');
-  const [complaintCategoryFilter, setComplaintCategoryFilter] = useState('');
-  const [updatingComplaintId, setUpdatingComplaintId] = useState(null);
+  // ── Complaints (via hook) ──
+  const {
+    complaints,
+    isLoadingComplaints,
+    complaintStatusFilter,
+    setComplaintStatusFilter,
+    complaintCategoryFilter,
+    setComplaintCategoryFilter,
+    updatingComplaintId,
+    fetchComplaints,
+    updateComplaintStatus,
+  } = useAdminComplaints();
 
   // ── Fetch functions ──
   const fetchDocuments = useCallback(async () => {
@@ -76,18 +82,6 @@ export default function AdminPage({ onBack }) {
     }
   }, []);
 
-  const fetchComplaints = useCallback(async (status = '', category = '') => {
-    setIsLoadingComplaints(true);
-    try {
-      const data = await getAdminComplaintsApi({ status, category });
-      setComplaints(data || []);
-    } catch (e) {
-      console.error('Failed to load complaints', e);
-    } finally {
-      setIsLoadingComplaints(false);
-    }
-  }, []);
-
   useEffect(() => {
     let isMounted = true;
     const loadAdminData = async () => {
@@ -100,20 +94,6 @@ export default function AdminPage({ onBack }) {
     loadAdminData();
     return () => { isMounted = false; };
   }, [fetchDocuments, fetchPostedNotices, fetchComplaints]);
-
-  const updateComplaintStatus = async (complaintId, newStatus) => {
-    setUpdatingComplaintId(complaintId);
-    try {
-      await updateComplaintStatusApi(complaintId, newStatus);
-      setComplaints(prev => prev.map(comp => 
-        comp.id === complaintId ? { ...comp, status: newStatus } : comp
-      ).filter(item => !complaintStatusFilter || item.status === complaintStatusFilter));
-    } catch (e) {
-      console.error('Failed to update status', e);
-    } finally {
-      setUpdatingComplaintId(null);
-    }
-  };
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];

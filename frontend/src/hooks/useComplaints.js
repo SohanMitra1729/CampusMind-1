@@ -1,12 +1,17 @@
 /**
- * src/hooks/useComplaints.js — Complaints Hook (Classify, Submit, Upvote & Admin Actions)
+ * src/hooks/useComplaints.js — Complaints Hook (Classify, Submit & Upvote)
+ *
+ * Scope: Student-side complaint lifecycle only.
+ * Admin complaint management lives in AdminPage.jsx which fetches directly via api/complaints.js.
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { getHostelsApi, classifyComplaintApi, submitComplaintApi, voteComplaintApi, getMyComplaintsApi, getAdminComplaintsApi, updateComplaintStatusApi } from '../api/complaints';
+import { getHostelsApi, classifyComplaintApi, submitComplaintApi, voteComplaintApi, getMyComplaintsApi } from '../api/complaints';
 
 export function useComplaints(userId) {
   const [hostels, setHostels] = useState([]);
+  const [hostelError, setHostelError] = useState(null);
+
   const [complaintPending, setComplaintPending] = useState(null);
   const [complaintSubmitting, setComplaintSubmitting] = useState(false);
   const [complaintResult, setComplaintResult] = useState(null);
@@ -21,19 +26,20 @@ export function useComplaints(userId) {
   const [myComplaints, setMyComplaints] = useState([]);
   const [myComplaintsLoading, setMyComplaintsLoading] = useState(false);
 
-  // Admin complaints
-  const [adminComplaints, setAdminComplaints] = useState([]);
-  const [isLoadingAdminComplaints, setIsLoadingAdminComplaints] = useState(false);
-  const [complaintStatusFilter, setComplaintStatusFilter] = useState('');
-  const [complaintCategoryFilter, setComplaintCategoryFilter] = useState('');
-  const [updatingComplaintId, setUpdatingComplaintId] = useState(null);
-
+  // ── Fetch hostels on mount ──────────────────────────────────────────────────
   useEffect(() => {
     getHostelsApi()
-      .then(data => setHostels(data || []))
-      .catch(() => {});
+      .then(data => {
+        setHostels(data || []);
+        setHostelError(null);
+      })
+      .catch((err) => {
+        console.error('Failed to load hostels:', err);
+        setHostelError('Could not load hostel list. Please refresh and try again.');
+      });
   }, []);
 
+  // ── Classify incoming text for complaint detection ──────────────────────────
   const detectComplaint = useCallback((inputText) => {
     if (!userId) return;
     classifyComplaintApi(inputText)
@@ -47,9 +53,10 @@ export function useComplaints(userId) {
           });
         }
       })
-      .catch(() => {});
+      .catch(() => {}); // Classification is best-effort — silent fail is acceptable
   }, [userId]);
 
+  // ── Fetch student's own complaints ─────────────────────────────────────────
   const fetchMyComplaints = useCallback(async () => {
     if (!userId) return;
     setMyComplaintsLoading(true);
@@ -63,6 +70,7 @@ export function useComplaints(userId) {
     }
   }, [userId]);
 
+  // ── Submit a complaint ──────────────────────────────────────────────────────
   const submitComplaint = useCallback(async () => {
     if (!complaintPending || complaintSubmitting) return;
     if (!selectedHostelId) {
@@ -91,6 +99,7 @@ export function useComplaints(userId) {
     }
   }, [complaintPending, complaintSubmitting, selectedHostelId, roomNumber, fetchMyComplaints]);
 
+  // ── Upvote an existing complaint ───────────────────────────────────────────
   const upvoteComplaint = useCallback(async (complaintId) => {
     if (votedComplaints.has(complaintId)) return;
     try {
@@ -107,32 +116,7 @@ export function useComplaints(userId) {
     }
   }, [votedComplaints]);
 
-  const fetchAdminComplaints = useCallback(async (status = '', category = '') => {
-    setIsLoadingAdminComplaints(true);
-    try {
-      const data = await getAdminComplaintsApi({ status, category });
-      setAdminComplaints(data || []);
-    } catch (e) {
-      console.error('Failed to load complaints', e);
-    } finally {
-      setIsLoadingAdminComplaints(false);
-    }
-  }, []);
-
-  const updateComplaintStatus = useCallback(async (complaintId, newStatus) => {
-    setUpdatingComplaintId(complaintId);
-    try {
-      await updateComplaintStatusApi(complaintId, newStatus);
-      setAdminComplaints(prev => prev.map(comp => 
-        comp.id === complaintId ? { ...comp, status: newStatus } : comp
-      ).filter(item => !complaintStatusFilter || item.status === complaintStatusFilter));
-    } catch (e) {
-      console.error('Failed to update status', e);
-    } finally {
-      setUpdatingComplaintId(null);
-    }
-  }, [complaintStatusFilter]);
-
+  // ── Reset complaint UI state ────────────────────────────────────────────────
   const resetComplaintState = useCallback(() => {
     setComplaintPending(null);
     setComplaintResult(null);
@@ -142,6 +126,7 @@ export function useComplaints(userId) {
 
   return {
     hostels,
+    hostelError,
     complaintPending,
     setComplaintPending,
     complaintSubmitting,
@@ -155,19 +140,10 @@ export function useComplaints(userId) {
     setShowMyComplaints,
     myComplaints,
     myComplaintsLoading,
-    adminComplaints,
-    isLoadingAdminComplaints,
-    complaintStatusFilter,
-    setComplaintStatusFilter,
-    complaintCategoryFilter,
-    setComplaintCategoryFilter,
-    updatingComplaintId,
     detectComplaint,
     fetchMyComplaints,
     submitComplaint,
     upvoteComplaint,
-    fetchAdminComplaints,
-    updateComplaintStatus,
     resetComplaintState,
   };
 }

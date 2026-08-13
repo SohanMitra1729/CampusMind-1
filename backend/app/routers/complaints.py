@@ -15,23 +15,15 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.core.security import get_current_user, get_current_user_optional, require_admin
+from app.core.deps import fetch_profile
 from app.schemas.complaint import (
     ComplaintClassifyRequest,
     ComplaintRequest,
     ComplaintStatusRequest,
 )
-import app.repositories.user_repository as user_repo
 import app.services.complaint_service as complaint_service
 
 router = APIRouter()
-
-
-# ── Helper: fetch profile for the JWT-verified user ───────────────────────────
-
-async def _fetch_profile(user_id: str) -> Dict[str, Any]:
-    """Fetch the profiles row. Returns {"id": user_id} minimum if not found."""
-    profile = user_repo.get_profile_by_id(user_id)
-    return profile or {"id": user_id}
 
 
 # ── Public: hostel list (no auth) ─────────────────────────────────────────────
@@ -60,7 +52,7 @@ async def complaint_classify(
 async def submit_complaint(req: ComplaintRequest, current_user=Depends(get_current_user)):
     """Full complaint pipeline: classify → similar → hostel enrich → save → forward."""
     user_id   = str(current_user.id)
-    user_info = await _fetch_profile(user_id)
+    user_info = await fetch_profile(user_id)
     try:
         return complaint_service.submit_complaint(
             text=req.text,
@@ -78,7 +70,7 @@ async def submit_complaint(req: ComplaintRequest, current_user=Depends(get_curre
 async def vote_complaint(complaint_id: str, current_user=Depends(get_current_user)):
     """Upvote an existing complaint ('I have the same issue'). Returns 409 if already voted."""
     user_id   = str(current_user.id)
-    user_info = await _fetch_profile(user_id)
+    user_info = await fetch_profile(user_id)
     try:
         return complaint_service.vote(complaint_id, user_info)
     except PermissionError as e:

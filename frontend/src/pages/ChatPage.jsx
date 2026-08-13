@@ -16,7 +16,6 @@ export default function ChatPage({ user, onLogout }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const {
-    notifications,
     filteredNotifs,
     unreadCount,
     showNotifications,
@@ -56,6 +55,7 @@ export default function ChatPage({ user, onLogout }) {
     activeChatId,
     input,
     setInput,
+    handleInputChange,
     isLoading,
     messagesEndRef,
     loadChat,
@@ -94,7 +94,6 @@ export default function ChatPage({ user, onLogout }) {
         <NotificationDrawer
           showNotifications={showNotifications}
           setShowNotifications={setShowNotifications}
-          notifications={notifications}
           filteredNotifs={filteredNotifs}
           unreadCount={unreadCount}
           notifFilter={notifFilter}
@@ -125,7 +124,7 @@ export default function ChatPage({ user, onLogout }) {
           messages={messages}
           isLoading={isLoading}
           input={input}
-          setInput={setInput}
+          onInputChange={handleInputChange}
           handleSubmit={handleFormSubmit}
           onQuickAction={handleQuickAction}
           messagesEndRef={messagesEndRef}

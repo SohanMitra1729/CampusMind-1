@@ -12,6 +12,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.core.security import get_current_user
+from app.core.deps import fetch_profile
 from app.schemas.chat import QueryRequest
 import app.repositories.user_repository as user_repo
 import app.services.chat_service as chat_service
@@ -19,25 +20,12 @@ import app.services.chat_service as chat_service
 router = APIRouter()
 
 
-# ── Helper: fetch the full profile for the JWT-verified user ──────────────────
-# Shared with complaint router — lives here for chat, duplicated minimally.
-
-async def _fetch_profile(user_id: str) -> Dict[str, Any]:
-    """
-    Fetch the profiles row for a JWT-verified user_id.
-    Returns at minimum {"id": user_id} if the profile row is missing.
-    Never raises — callers should handle missing fields gracefully.
-    """
-    profile = user_repo.get_profile_by_id(user_id)
-    return profile or {"id": user_id}
-
-
 # ── Chat endpoints ─────────────────────────────────────────────────────────────
 
 @router.post("/api/chat")
 async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
     user_id   = str(current_user.id)
-    user_info = await _fetch_profile(user_id)
+    user_info = await fetch_profile(user_id)
     try:
         return chat_service.handle_chat(
             user_id=user_id,

@@ -61,7 +61,8 @@ async def login(req: LoginRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Wrong password, unconfirmed email, etc. — auth failure = 401
+        raise HTTPException(status_code=401, detail=str(e))
 
 
 @router.post("/api/auth/forgot-password")
@@ -79,6 +80,7 @@ async def reset_password(req: ResetPasswordRequest):
     try:
         return auth_service.reset_password(req.access_token, req.password)
     except ValueError as e:
+        # Invalid/expired token — 401 Unauthorized
         raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

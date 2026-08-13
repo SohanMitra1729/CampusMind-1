@@ -36,6 +36,7 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 import app.repositories.notice_repository as notice_repo
 import app.repositories.document_repository as doc_repo
+from app.core.logger import logger
 from app.services.pdf_processor import process_pdf
 from app.services.notice_agent import (
     classify_document,
@@ -84,7 +85,7 @@ async def _embed_with_retry(texts: List[str], max_retries: int = 5) -> List[List
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 wait = 15 * (2 ** attempt)
-                print(f"[Embed] Rate limit hit, waiting {wait}s (attempt {attempt + 1})...")
+                logger.warning(f"[Embed] Rate limit hit, waiting {wait}s (attempt {attempt + 1})...")
                 await asyncio.sleep(wait)
             else:
                 raise
@@ -153,7 +154,7 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
         summary        = classification.get("summary", filename)
         agent_result["doc_type"] = doc_type
 
-        print(f"[NoticeService] '{filename}' classified as: {doc_type}")
+        logger.info(f"[NoticeService] '{filename}' classified as: {doc_type}")
 
         if doc_type in NOTIFY_TYPES:
             all_texts    = [c["content"] for c in chunks]
@@ -176,14 +177,14 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
                 notice_row["id"], users, notif["title"], notif["message_template"]
             )
             agent_result["notified"] = sent
-            print(f"[NoticeService] Notifications dispatched: {sent}")
+            logger.info(f"[NoticeService] Notifications dispatched: {sent}")
         else:
             agent_result["skipped"] = True
-            print(f"[NoticeService] doc_type='{doc_type}' → no notification needed")
+            logger.info(f"[NoticeService] doc_type='{doc_type}' → no notification needed")
 
     except Exception as agent_err:
         # Agent failure must NOT break the main upload response
-        print(f"[NoticeService] Agent pipeline error (non-fatal): {agent_err}")
+        logger.error(f"[NoticeService] Agent pipeline error (non-fatal): {agent_err}")
 
     return {
         "message":               f"Successfully ingested '{filename}'!",

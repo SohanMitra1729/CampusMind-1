@@ -2,14 +2,14 @@
  * src/components/chat/MessageList.jsx — Messages Feed, Quick Actions & RAG Sources
  */
 
-import { Sparkles, User as UserIcon, Loader2, Calendar, Home, BellRing, AlertCircle, CheckCircle2, Paperclip, Send } from 'lucide-react';
+import { Sparkles, User as UserIcon, Loader2, Calendar, Home, BellRing, AlertCircle, CheckCircle2, Send } from 'lucide-react';
 import { Badge } from '../ui/Badge';
 
 export default function MessageList({
   messages,
   isLoading,
   input,
-  setInput,
+  onInputChange,
   handleSubmit,
   onQuickAction,
   messagesEndRef,
@@ -25,8 +25,8 @@ export default function MessageList({
           </div>
         )}
 
-        {messages.map((msg, index) => (
-          <div key={index} className={`chat-message-row ${msg.role === 'user' ? 'user-row' : 'bot-row'}`}>
+        {messages.map((msg) => (
+          <div key={msg.id} className={`chat-message-row ${msg.role === 'user' ? 'user-row' : 'bot-row'}`}>
             <div className="message-avatar">
               {msg.role === 'user' ? <UserIcon size={18} /> : <Sparkles size={18} />}
             </div>
@@ -93,7 +93,7 @@ export default function MessageList({
             className="chat-input-field"
             placeholder="Ask CampusMind anything..."
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => onInputChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -104,7 +104,6 @@ export default function MessageList({
             disabled={isLoading}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button type="button" className="chat-attach-btn"><Paperclip size={20} /></button>
             <button
               type="submit"
               className="chat-send-btn"

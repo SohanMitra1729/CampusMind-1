@@ -11,19 +11,11 @@ Provides three FastAPI Depends()-compatible callables:
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.core.config import settings
+from app.db.supabase import supabase
 
 # ── Bearer extractors ──────────────────────────────────────────────────────────
 _bearer = HTTPBearer(auto_error=True)
 _bearer_optional = HTTPBearer(auto_error=False)
-
-
-def _get_supabase():
-    """
-    Lazy import of the Supabase client to avoid circular imports.
-    Will be replaced with app.db.supabase in Step 2.
-    """
-    from rag import supabase
-    return supabase
 
 
 # ── User auth ──────────────────────────────────────────────────────────────────
@@ -38,8 +30,7 @@ async def get_current_user(
     """
     token = credentials.credentials
     try:
-        sb = _get_supabase()
-        user_resp = sb.auth.get_user(token)
+        user_resp = supabase.auth.get_user(token)
         if not user_resp or not user_resp.user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
