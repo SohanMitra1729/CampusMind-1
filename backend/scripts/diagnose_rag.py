@@ -1,7 +1,7 @@
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
-from rag import supabase
+from app.db.supabase import supabase
 
 # Print ALL chunks from provisional results PDF in full
 res = supabase.table('documents').select('id, content, metadata').execute()

@@ -1,3 +1,13 @@
+"""
+app/services/rag_service.py — Hybrid Vector RAG Retrieval Engine
+─────────────────────────────────────────────────────────────────
+Encapsulates RAG pipeline:
+  - Gemini embeddings (3072-dim)
+  - Hybrid pgvector + FTS search with threshold filtering & deduplication
+  - Pinned personal academic record lookup by scholar_id
+  - Scope-restricted LLM answer generation via Groq
+"""
+
 import os
 import requests
 from typing import Any, Dict, List, Optional
@@ -5,11 +15,13 @@ from groq import Groq
 
 from app.core.config import settings
 from app.db.supabase import supabase
+import app.repositories.document_repository as doc_repo
 
 supabase_url = settings.SUPABASE_URL
 supabase_key = settings.SUPABASE_SERVICE_KEY
 
 groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
+
 
 def get_gemini_embedding(text: str) -> List[float]:
     """Call Google Gemini Embeddings API directly to fetch 3072-dim vector."""
@@ -25,29 +37,47 @@ def get_gemini_embedding(text: str) -> List[float]:
     data = response.json()
     return data["embedding"]["values"]
 
+
+def hybrid_search(
+    query_text: str,
+    query_embedding: List[float],
+    match_count: int = 6,
+    filter_metadata: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Perform hybrid search (vector similarity + full-text search) via Supabase RPC.
+    Calls PostgreSQL function: hybrid_search_documents
+    """
+    try:
+        return doc_repo.execute_hybrid_search(
+            query_text=query_text,
+            query_embedding=query_embedding,
+            match_count=match_count,
+            filter_metadata=filter_metadata,
+        )
+    except Exception as e:
+        print(f"[RAG] hybrid_search error: {e}")
+        return []
+
+
 def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Query Supabase hybrid_search, then filter by score and deduplicate."""
     try:
         query_embedding = get_gemini_embedding(query)
-        params = {
-            "query_text": query,
-            "query_embedding": query_embedding,
-            "match_count": 12,          # Retrieve 12 candidates
-            "filter": metadata_filter or {}
-        }
-        res = supabase.rpc("hybrid_search", params).execute()
-        candidates = res.data or []
+        candidates = hybrid_search(
+            query_text=query,
+            query_embedding=query_embedding,
+            match_count=12,
+            filter_metadata=metadata_filter
+        )
 
-        # ── 1. Score filtering: drop chunks below relevance threshold ──────────
         MIN_SCORE = 0.005
         scored = [c for c in candidates if (c.get("similarity") or 0) >= MIN_SCORE]
 
-        # ── 2. Deduplication: skip near-identical overlapping chunks ───────────
         seen_fingerprints: list[str] = []
         unique: list[Dict[str, Any]] = []
         for chunk in scored:
             fingerprint = chunk["content"][:200].strip()
-            # Check if this chunk is >85% similar to any already-selected chunk
             is_duplicate = any(
                 len(set(fingerprint) & set(fp)) / max(len(set(fingerprint)), len(set(fp)), 1) > 0.85
                 for fp in seen_fingerprints
@@ -56,7 +86,6 @@ def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]] = Non
                 seen_fingerprints.append(fingerprint)
                 unique.append(chunk)
 
-        # ── 3. Cap at top-6 highest-score unique chunks ────────────────────────
         top_chunks = unique[:6]
         print(f"[RAG] Retrieved {len(candidates)} candidates → {len(scored)} above threshold → {len(unique)} unique → {len(top_chunks)} sent to LLM")
         return top_chunks
@@ -65,9 +94,9 @@ def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]] = Non
         print(f"[RAG] Retrieval error: {e}")
         return []
 
+
 def fetch_personal_record(scholar_id: str) -> Optional[Dict[str, Any]]:
-    """Directly fetch a student's own result record by registration number (scholar_id).
-    This bypasses vector search entirely — a 100% reliable metadata lookup."""
+    """Directly fetch a student's own result record by registration number (scholar_id)."""
     try:
         res = supabase.table("documents") \
             .select("content, metadata") \
@@ -80,27 +109,30 @@ def fetch_personal_record(scholar_id: str) -> Optional[Dict[str, Any]]:
         print(f"[RAG] Personal record lookup error: {e}")
     return None
 
-# Keywords that indicate a query is about the user's own academic record
+
 PERSONAL_RESULT_KEYWORDS = [
     "my result", "my marks", "my sgpa", "my cgpa", "my grade", "my score",
     "my semester", "my performance", "my subject", "how did i", "did i pass",
     "my gpa", "my points", "my transcript", "my academic"
 ]
 
+
 def is_personal_result_query(query: str) -> bool:
     """Detect if the query is asking about the logged-in student's own results."""
     q = query.lower()
     return any(kw in q for kw in PERSONAL_RESULT_KEYWORDS)
 
-def get_answer(query: str, metadata_filter: Optional[Dict[str, Any]] = None, user_info: Optional[Dict[str, Any]] = None, chat_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-    """Run the RAG pipeline with smart retrieval and structured context."""
 
+def get_answer(
+    query: str,
+    metadata_filter: Optional[Dict[str, Any]] = None,
+    user_info: Optional[Dict[str, Any]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None
+) -> Dict[str, Any]:
+    """Run the RAG pipeline with smart retrieval and structured context."""
     scholar_id = user_info.get("scholar_id") if user_info else None
     personal_context = ""
 
-    # ── Pinned personal record: direct metadata lookup by scholar_id ──────────
-    # This runs for every result-related query — no vector search needed for the
-    # student's own record. scholar_id in the profile = regn_no in the PDF.
     if scholar_id and is_personal_result_query(query):
         record = fetch_personal_record(scholar_id)
         if record:
@@ -112,22 +144,18 @@ def get_answer(query: str, metadata_filter: Optional[Dict[str, Any]] = None, use
         else:
             print(f"[RAG] No personal record found for scholar_id={scholar_id}")
 
-    # 1. Retrieve best matching chunks via hybrid vector search
     context_items = retrieve_context(query, metadata_filter)
     
-    # 2. Build structured context with source labels for each chunk
     if context_items:
         context_parts = []
         for item in context_items:
             source = item.get("metadata", {}).get("source", "unknown")
-            # Only keep the filename, strip any path prefix
             source_name = source.split("/")[-1].split("\\")[-1]
             context_parts.append(f"[Source: {source_name}]\n{item['content'].strip()}")
         context_text = "\n\n---\n\n".join(context_parts)
     else:
         context_text = "(No relevant documents found for this query.)"
 
-    # 3. Format active user context
     user_context = ""
     if user_info:
         user_context = (
@@ -138,7 +166,6 @@ def get_answer(query: str, metadata_filter: Optional[Dict[str, Any]] = None, use
             f"- Username: {user_info.get('username')}\n"
         )
     
-    # 4. Build system prompt
     system_instruction = f"""You are CampusMind, a dedicated AI assistant exclusively for campus and institutional matters.
 {personal_context}
 You have access to the following institutional document excerpts to answer student queries:
@@ -179,7 +206,6 @@ Rules for campus-related responses:
 6. Keep responses clear, concise, and helpful. Use bullet points or numbered lists when listing multiple items.
 """
     
-    # 5. Generate answer via Groq
     try:
         messages = [{"role": "system", "content": system_instruction}]
         
@@ -206,4 +232,3 @@ Rules for campus-related responses:
         "context": [item["content"] for item in context_items],
         "metadata": [item["metadata"] for item in context_items]
     }
-
