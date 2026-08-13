@@ -85,6 +85,20 @@ async def get_notifications(current_user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# NOTE: /read-all MUST be registered before /{notif_id}/read.
+# FastAPI matches routes top-down; if /{notif_id}/read came first,
+# a request to /read-all would match it with notif_id="read-all".
+
+@router.patch("/api/notifications/read-all")
+async def mark_all_notifications_read(current_user=Depends(get_current_user)):
+    """Mark all notifications as read for the authenticated user."""
+    try:
+        notice_service.mark_all_read(str(current_user.id))
+        return {"message": "All notifications marked as read."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.patch("/api/notifications/{notif_id}/read")
 async def mark_notification_read(notif_id: str, current_user=Depends(get_current_user)):
     """Mark a single notification as read (ownership verified)."""
@@ -93,15 +107,5 @@ async def mark_notification_read(notif_id: str, current_user=Depends(get_current
         return {"message": "Notification marked as read."}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.patch("/api/notifications/read-all")
-async def mark_all_notifications_read(current_user=Depends(get_current_user)):
-    """Mark all notifications as read for the authenticated user."""
-    try:
-        notice_service.mark_all_read(str(current_user.id))
-        return {"message": "All notifications marked as read."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

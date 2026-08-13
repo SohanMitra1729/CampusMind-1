@@ -40,7 +40,8 @@ export function useChat(userId, onComplaintDetect) {
     setIsLoading(true);
     try {
       const data = await getChatMessagesApi(chatId);
-      setMessages(data || []);
+      // Ensure every message has a stable id for React key
+      setMessages((data || []).map((m, i) => ({ id: m.id ?? `loaded-${i}`, ...m })));
     } catch (e) {
       console.error('Failed to load chat messages', e);
     } finally {
@@ -73,15 +74,24 @@ export function useChat(userId, onComplaintDetect) {
     setSelectedSource(source);
   }, []);
 
+  // Clear the source filter if the user manually edits the input after
+  // clicking a quick action — avoids filtering RAG by the wrong source.
+  const handleInputChange = useCallback((value) => {
+    setInput(value);
+    // If input diverges from what the quick action set, clear the source filter
+    setSelectedSource(null);
+  }, []);
+
   const sendMessage = useCallback(async (e) => {
     if (e) e.preventDefault();
     if (!input.trim()) return;
 
-    const inputText = input; 
-    const userMessage = { role: 'user', content: inputText };
+    const inputText = input;
+    const userMessage = { id: crypto.randomUUID(), role: 'user', content: inputText };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
+    setSelectedSource(null); // Always clear source on send
 
     const metadata_filter = selectedSource ? { source: selectedSource } : null;
     setSelectedSource(null);
@@ -93,6 +103,7 @@ export function useChat(userId, onComplaintDetect) {
     try {
       const data = await sendChatQueryApi(inputText, activeChatId, metadata_filter);
       const botMessage = {
+        id: data.message_id ?? crypto.randomUUID(),
         role: 'bot',
         content: data.answer,
         context: data.context,
@@ -108,6 +119,7 @@ export function useChat(userId, onComplaintDetect) {
     } catch (error) {
       console.error('Error:', error);
       const errorMessage = {
+        id: crypto.randomUUID(),
         role: 'bot',
         content: 'Sorry, I encountered an error. Please try again later. Is the backend running?',
       };
@@ -131,6 +143,7 @@ export function useChat(userId, onComplaintDetect) {
     activeChatId,
     input,
     setInput,
+    handleInputChange,
     isLoading,
     messagesEndRef,
     fetchChats,

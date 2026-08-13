@@ -1,5 +1,8 @@
 /**
  * src/components/auth/Auth.jsx — Student Login & Registration Form
+ *
+ * Uses the useAuth hook for all auth operations so that state is managed
+ * centrally in the hook — no direct API calls or manual localStorage writes here.
  */
 
 import { useState } from 'react';
@@ -7,7 +10,7 @@ import { Eye, EyeOff, Mail, Lock, Hash, AlertCircle, CheckCircle2 } from 'lucide
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../ui/Card';
-import { loginApi, signupApi, forgotPasswordApi, resetPasswordApi } from '../../api/auth';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function Auth({ onAuthSuccess, initialResetToken = null }) {
   const [view, setView] = useState(initialResetToken ? 'reset-password' : 'login');
@@ -16,49 +19,37 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [scholarId, setScholarId] = useState('');
-
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [alert, setAlert] = useState(null);
+  const [localAlert, setLocalAlert] = useState(null);
+
+  const { login, signup, forgotPassword, resetPassword, isLoading } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setAlert(null);
-    setIsLoading(true);
+    setLocalAlert(null);
 
     try {
       if (view === 'login') {
         const identifier = email || username;
-        const data = await loginApi(identifier, password);
-        if (data.session?.access_token) {
-          sessionStorage.setItem('sb-access-token', data.session.access_token);
-        }
-        localStorage.setItem('campusmind_session', JSON.stringify(data.session));
-        localStorage.setItem('campusmind_user', JSON.stringify(data.user));
-        onAuthSuccess(data.user);
+        const user = await login(identifier, password);
+        onAuthSuccess(user);
       } else if (view === 'signup') {
-        await signupApi({
-          name: name.trim(),
-          username: username.trim(),
-          email: email.trim(),
-          scholar_id: scholarId.trim(),
-          password,
-        });
-        setAlert({
+        await signup({ name: name.trim(), username: username.trim(), email: email.trim(), scholar_id: scholarId.trim(), password });
+        setLocalAlert({
           type: 'success',
           text: 'Account created! Check your email to confirm registration before signing in.',
         });
         setView('login');
         setPassword('');
       } else if (view === 'forgot-password') {
-        await forgotPasswordApi(email.trim());
-        setAlert({
+        await forgotPassword(email.trim());
+        setLocalAlert({
           type: 'success',
           text: 'Password reset link sent! Check your inbox.',
         });
       } else if (view === 'reset-password') {
-        await resetPasswordApi(initialResetToken, password);
-        setAlert({
+        await resetPassword(initialResetToken, password);
+        setLocalAlert({
           type: 'success',
           text: 'Password updated! Please log in with your new password.',
         });
@@ -66,18 +57,16 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
         setPassword('');
       }
     } catch (err) {
-      setAlert({
+      setLocalAlert({
         type: 'error',
         text: err.message || 'An unexpected error occurred.',
       });
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const switchView = (newView) => {
     setView(newView);
-    setAlert(null);
+    setLocalAlert(null);
   };
 
   return (
@@ -102,10 +91,10 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
         </CardHeader>
 
         <CardContent>
-          {alert && (
-            <div className={`auth-alert-box ${alert.type === 'error' ? 'auth-alert-error' : 'auth-alert-success'}`}>
-              {alert.type === 'error' ? <AlertCircle className="cm-icon-md flex-shrink-0" /> : <CheckCircle2 className="cm-icon-md flex-shrink-0" />}
-              <span>{alert.text}</span>
+          {localAlert && (
+            <div className={`auth-alert-box ${localAlert.type === 'error' ? 'auth-alert-error' : 'auth-alert-success'}`}>
+              {localAlert.type === 'error' ? <AlertCircle className="cm-icon-md flex-shrink-0" /> : <CheckCircle2 className="cm-icon-md flex-shrink-0" />}
+              <span>{localAlert.text}</span>
             </div>
           )}
 
@@ -114,38 +103,18 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
               <>
                 <div className="auth-input-group">
                   <label className="auth-label">Full Name</label>
-                  <Input
-                    type="text"
-                    placeholder="e.g. Rahul Sharma"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                  />
+                  <Input type="text" placeholder="e.g. Rahul Sharma" value={name} onChange={(e) => setName(e.target.value)} required />
                 </div>
-
                 <div className="auth-grid-2">
                   <div className="auth-input-group">
                     <label className="auth-label">Username</label>
-                    <Input
-                      type="text"
-                      placeholder="e.g. rahul_s"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      required
-                    />
+                    <Input type="text" placeholder="e.g. rahul_s" value={username} onChange={(e) => setUsername(e.target.value)} required />
                   </div>
                   <div className="auth-input-group">
                     <label className="auth-label">Scholar ID</label>
                     <div className="auth-input-wrapper">
                       <Hash className="auth-input-icon-left cm-icon-sm" />
-                      <Input
-                        type="text"
-                        placeholder="e.g. 2112001"
-                        value={scholarId}
-                        onChange={(e) => setScholarId(e.target.value)}
-                        className="auth-input-with-icon-left"
-                        required
-                      />
+                      <Input type="text" placeholder="e.g. 2112001" value={scholarId} onChange={(e) => setScholarId(e.target.value)} className="auth-input-with-icon-left" required />
                     </div>
                   </div>
                 </div>
@@ -176,12 +145,7 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
                 <div className="auth-label-row">
                   <label className="auth-label">Password</label>
                   {view === 'login' && (
-                    <button
-                      type="button"
-                      className="auth-link"
-                      onClick={() => switchView('forgot-password')}
-                      style={{ fontSize: 'var(--text-xs)' }}
-                    >
+                    <button type="button" className="auth-link" onClick={() => switchView('forgot-password')} style={{ fontSize: 'var(--text-xs)' }}>
                       Forgot?
                     </button>
                   )}
@@ -196,11 +160,7 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
                     className="auth-input-with-icon-left auth-input-with-icon-right"
                     required
                   />
-                  <button
-                    type="button"
-                    className="auth-input-icon-right"
-                    onClick={() => setShowPassword(!showPassword)}
-                  >
+                  <button type="button" className="auth-input-icon-right" onClick={() => setShowPassword(!showPassword)}>
                     {showPassword ? <EyeOff className="cm-icon-sm" /> : <Eye className="cm-icon-sm" />}
                   </button>
                 </div>
@@ -220,23 +180,17 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
           {view === 'login' && (
             <span>
               Don't have an account?
-              <button type="button" className="auth-link" onClick={() => switchView('signup')}>
-                Sign up
-              </button>
+              <button type="button" className="auth-link" onClick={() => switchView('signup')}>Sign up</button>
             </span>
           )}
           {view === 'signup' && (
             <span>
               Already have an account?
-              <button type="button" className="auth-link" onClick={() => switchView('login')}>
-                Sign in
-              </button>
+              <button type="button" className="auth-link" onClick={() => switchView('login')}>Sign in</button>
             </span>
           )}
           {(view === 'forgot-password' || view === 'reset-password') && (
-            <button type="button" className="auth-link" onClick={() => switchView('login')}>
-              ← Back to Sign in
-            </button>
+            <button type="button" className="auth-link" onClick={() => switchView('login')}>← Back to Sign in</button>
           )}
         </CardFooter>
       </Card>
