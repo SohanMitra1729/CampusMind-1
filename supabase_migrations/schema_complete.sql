@@ -7,16 +7,17 @@
 -- ── 1. Extensions ─────────────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- ── 2. Vector Documents Table (pgvector 3072 + FTS) ──────────────────────────
+-- ── 2. Vector Documents Table (pgvector 1536 + FTS + HNSW Index) ──────────
 CREATE TABLE IF NOT EXISTS public.documents (
     id BIGSERIAL PRIMARY KEY,
     content TEXT,
     metadata JSONB,
-    embedding VECTOR(3072),
+    embedding VECTOR(1536),
     fts TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_fts ON public.documents USING GIN (fts);
+CREATE INDEX IF NOT EXISTS idx_documents_embedding ON public.documents USING hnsw (embedding vector_cosine_ops);
 ALTER TABLE public.documents ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Service role full access on documents" ON public.documents;
@@ -242,7 +243,7 @@ CREATE POLICY "Service role full access on complaint_votes" ON public.complaint_
 -- ── 8. Hybrid RRF Search Stored Procedure ───────────────────────────────────
 CREATE OR REPLACE FUNCTION hybrid_search(
     query_text TEXT,
-    query_embedding VECTOR(3072),
+    query_embedding VECTOR(1536),
     match_count INT,
     filter JSONB DEFAULT '{}',
     full_text_weight FLOAT DEFAULT 1.0,

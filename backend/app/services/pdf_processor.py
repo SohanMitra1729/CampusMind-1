@@ -47,6 +47,8 @@ MIN_ROW_CELLS = 2
 IMAGE_CHAR_THRESHOLD = 80
 IMAGE_PAGE_THRESHOLD = 0.60
 OCR_DPI = 300
+import shutil
+
 TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
@@ -55,8 +57,12 @@ TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 def _configure_tesseract() -> bool:
     try:
         import pytesseract
-        if os.path.isfile(TESSERACT_CMD):
+        tesseract_in_path = shutil.which("tesseract")
+        if tesseract_in_path:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_in_path
+        elif os.path.isfile(TESSERACT_CMD):
             pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
         pytesseract.get_tesseract_version()
         return True
     except Exception:

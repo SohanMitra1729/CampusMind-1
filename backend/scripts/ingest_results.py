@@ -14,11 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from app.db.supabase import supabase
-
-print("Initializing Google Embeddings...")
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
+from app.services.rag_service import get_gemini_embedding
 
 PDF_PATH = "../data/pdfs/provisional-ug-6th-sem-cse-01062026.pdf"
 SOURCE_NAME = "provisional-ug-6th-sem-cse-01062026.pdf"
@@ -91,10 +88,10 @@ def student_to_text(s):
     )
     return text
 
-def embed_with_retry(embeddings_model, texts, max_retries=5):
+def embed_with_retry(texts, max_retries=5):
     for attempt in range(max_retries):
         try:
-            return embeddings_model.embed_documents(texts)
+            return [get_gemini_embedding(t) for t in texts]
         except Exception as e:
             err_str = str(e)
             if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
@@ -148,7 +145,7 @@ def ingest_results():
     for i in range(0, len(docs), BATCH_SIZE):
         batch = docs[i:i+BATCH_SIZE]
         texts = [d["text"] for d in batch]
-        batch_embs = embed_with_retry(embeddings, texts)
+        batch_embs = embed_with_retry(texts)
         rows = [
             {
                 "content": doc["text"],
