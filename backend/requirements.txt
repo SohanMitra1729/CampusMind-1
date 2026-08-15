@@ -55,7 +55,5 @@ python-dotenv==1.2.2
 numpy==2.5.0
 pillow==12.2.0
 
-# ── Optional: OCR support for scanned PDFs ─────────────────────────────────────
-# Uncomment the lines below and install Tesseract binary if you need OCR:
-# pymupdf==1.25.5
-# pytesseract==0.3.13
+# ── Fast PDF page reading ──────────────────────────────────────────────────────
+pymupdf==1.28.2

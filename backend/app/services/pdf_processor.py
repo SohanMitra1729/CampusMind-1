@@ -1,17 +1,13 @@
 """
 app/services/pdf_processor.py
 ──────────────────────────────
-Smart PDF ingestion pipeline with automatic content-type detection.
+Smart PDF ingestion pipeline optimized for campus documents (result sheets,
+notices, hostel allotments, timetables, and fee structures).
 
 Flow:
   PDF Upload
     ↓
   detect_content_type()
-    ├── "image"   → PyMuPDF renders pages at 300 DPI
-    │               → pytesseract OCR per page
-    │               → reconstructed text re-classified:
-    │                   ├── tabular patterns? → row-sentence chunks  (ocr_tabular)
-    │                   └── plain text        → text-splitter chunks (ocr_text)
     ├── "tabular" → pdfplumber table extraction
     │               → header reconstruction (multi-row aware)
     │               → row → natural-language sentence
@@ -26,9 +22,8 @@ import os
 import io
 import json
 import warnings
-import tempfile
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -44,82 +39,12 @@ TEXT_SPLITTER = RecursiveCharacterTextSplitter(
 
 TABULAR_PAGE_THRESHOLD = 0.30
 MIN_ROW_CELLS = 2
-IMAGE_CHAR_THRESHOLD = 80
-IMAGE_PAGE_THRESHOLD = 0.60
-OCR_DPI = 300
-import shutil
-
-TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
-# ── 0. Tesseract bootstrap ─────────────────────────────────────────────────────
-
-def _configure_tesseract() -> bool:
-    try:
-        import pytesseract
-        tesseract_in_path = shutil.which("tesseract")
-        if tesseract_in_path:
-            pytesseract.pytesseract.tesseract_cmd = tesseract_in_path
-        elif os.path.isfile(TESSERACT_CMD):
-            pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-
-        pytesseract.get_tesseract_version()
-        return True
-    except Exception:
-        return False
-
-
-# ── 1. Image-PDF detection ─────────────────────────────────────────────────────
-
-def _page_char_count(page) -> int:
-    text = page.get_text("text")
-    return len(text.strip())
-
-
-def is_image_based_pdf(pdf_path: str) -> bool:
-    try:
-        import fitz  # PyMuPDF
-        doc = fitz.open(pdf_path)
-        total = len(doc)
-        if total == 0:
-            doc.close()
-            return False
-
-        sample_indices = sorted(set(
-            [0] +
-            [total // 4, total // 2, 3 * total // 4] +
-            [total - 1]
-        ))
-        sample_indices = [i for i in sample_indices if 0 <= i < total]
-
-        image_pages = 0
-        for idx in sample_indices:
-            page = doc[idx]
-            chars = _page_char_count(page)
-            if chars < IMAGE_CHAR_THRESHOLD:
-                image_pages += 1
-            print(f"[PDF Processor]   [detect] page {idx+1}: {chars} chars extracted")
-
-        doc.close()
-        ratio = image_pages / len(sample_indices)
-        print(f"[PDF Processor]   [detect] {image_pages}/{len(sample_indices)} image-like pages (ratio={ratio:.2f}, threshold={IMAGE_PAGE_THRESHOLD})")
-        return ratio >= IMAGE_PAGE_THRESHOLD
-
-    except ImportError:
-        print("[PDF Processor] PyMuPDF not installed — cannot detect image PDFs.")
-        return False
-    except Exception as e:
-        print(f"[PDF Processor] Image detection error: {e}")
-        return False
-
-
-# ── 2. Content-type detection (3-way) ─────────────────────────────────────────
+# ── 1. Content-type detection ─────────────────────────────────────────────────
 
 def detect_content_type(pdf_path: str) -> str:
-    if is_image_based_pdf(pdf_path):
-        print(f"[PDF Processor] {Path(pdf_path).name}: image-based PDF detected → 'image'")
-        return "image"
-
+    """Check if PDF contains tabular pages (e.g. result sheets, fee tables, allotments)."""
     try:
         import pdfplumber
         with pdfplumber.open(pdf_path) as pdf:
@@ -141,7 +66,7 @@ def detect_content_type(pdf_path: str) -> str:
             content_type = "tabular" if ratio >= TABULAR_PAGE_THRESHOLD else "text"
             print(
                 f"[PDF Processor] {Path(pdf_path).name}: "
-                f"{tabular_pages}/{total} tabular pages → '{content_type}'"
+                f"{tabular_pages}/{total} tabular pages -> '{content_type}'"
             )
             return content_type
 
@@ -149,17 +74,18 @@ def detect_content_type(pdf_path: str) -> str:
         print("[PDF Processor] pdfplumber not installed, falling back to text mode.")
         return "text"
     except Exception as e:
-        print(f"[PDF Processor] Content detection error: {e} — falling back to text.")
+        print(f"[PDF Processor] Content detection error: {e} -- falling back to text.")
         return "text"
 
 
-# ── 3. Text-mode processing ────────────────────────────────────────────────────
+# ── 2. Text-mode processing ────────────────────────────────────────────────────
 
 def process_text_pdf(
     pdf_path: str,
     source_name: str,
     content_type_label: str = "text",
 ) -> List[Dict[str, Any]]:
+    """Standard text extraction using PyPDFLoader and character splitting."""
     loader = PyPDFLoader(pdf_path)
     pages = loader.load()
     valid = [p for p in pages if len(p.page_content.strip()) > 50]
@@ -173,320 +99,137 @@ def process_text_pdf(
         meta["source"] = source_name
         meta["content_type"] = content_type_label
         chunks.append({"content": split.page_content.strip(), "metadata": meta})
-    print(f"[PDF Processor] Text mode: {len(valid)} pages → {len(chunks)} chunks")
+    print(f"[PDF Processor] Text mode: {len(valid)} pages -> {len(chunks)} chunks")
     return chunks
 
 
-# ── 4. Tabular-mode processing ─────────────────────────────────────────────────
+# ── 3. Tabular-mode processing ─────────────────────────────────────────────────
 
-def _clean_cell(value) -> str:
-    if value is None:
-        return ""
-    s = str(value).strip()
-    s = re.sub(r"\s+", " ", s)
-    return s
-
-
-def _reconstruct_headers(table: List[List]) -> Optional[Tuple[List[str], int]]:
-    if not table:
-        return None
-
-    def _is_data_row(row: List) -> bool:
-        for cell in row:
-            c = _clean_cell(cell)
-            if re.match(r"^\d+(\.\d+)?$", c):
-                return True
-        return False
-
-    header_rows = []
-    data_start = 0
-    for i, row in enumerate(table):
-        if all(_clean_cell(c) == "" for c in row):
-            continue
-        if not _is_data_row(row):
-            header_rows.append(row)
-            data_start = i + 1
-        else:
-            data_start = i
-            break
-
-    if not header_rows:
-        n_cols = max(len(r) for r in table)
-        return [f"Col{i+1}" for i in range(n_cols)], 0
-
-    n_cols = max(len(r) for r in header_rows)
-    headers = []
-    for col in range(n_cols):
-        parts = []
-        for row in header_rows:
-            cell = _clean_cell(row[col]) if col < len(row) else ""
-            if cell and cell not in parts:
-                parts.append(cell)
-        headers.append(" ".join(parts) if parts else f"Col{col+1}")
-
-    return headers, data_start
-
-
-def _table_to_nl_sentences(
-    table: List[List],
-    source_name: str,
-    page_num: int,
-    table_idx: int,
-    content_type_label: str = "tabular",
-) -> List[Dict[str, Any]]:
-    result = _reconstruct_headers(table)
-    if result is None:
+def _flatten_headers(raw_headers: List[List[Optional[str]]]) -> List[str]:
+    """Merge multi-row header cells into single column labels."""
+    if not raw_headers:
         return []
 
-    headers, data_start = result
-    chunks = []
+    cols = len(raw_headers[0])
+    flat = []
+    for c in range(cols):
+        parts = []
+        for r in range(len(raw_headers)):
+            if c < len(raw_headers[r]):
+                val = raw_headers[r][c]
+                if val and str(val).strip():
+                    parts.append(str(val).strip().replace("\n", " "))
+        flat.append(" ".join(parts) if parts else f"Col_{c+1}")
+    return flat
 
-    for row in table[data_start:]:
-        cells = [_clean_cell(c) for c in row]
-        if not any(cells):
+
+def _row_to_sentence(
+    row: List[Optional[str]],
+    headers: List[str],
+    doc_title: str,
+) -> Optional[str]:
+    """Convert a single table row into a self-contained natural-language sentence."""
+    pairs = []
+    for idx, cell in enumerate(row):
+        val = str(cell).strip().replace("\n", " ") if cell is not None else ""
+        if not val:
             continue
+        col_name = headers[idx] if idx < len(headers) else f"Col_{idx+1}"
+        pairs.append(f"{col_name}: {val}")
 
-        pairs = []
-        for header, value in zip(headers, cells):
-            if value and header:
-                pairs.append(f"{header}: {value}")
+    if not pairs:
+        return None
 
-        if not pairs:
-            continue
-
-        sentence = " | ".join(pairs)
-
-        regn_match = None
-        for header, value in zip(headers, cells):
-            if re.match(r"^\d{7}$", value):
-                regn_match = value
-                break
-
-        meta: Dict[str, Any] = {
-            "source": source_name,
-            "content_type": content_type_label,
-            "page": page_num,
-            "table_index": table_idx,
-        }
-        if regn_match:
-            meta["regn_no"] = regn_match
-
-        chunks.append({"content": sentence, "metadata": meta})
-
-    return chunks
+    row_str = " | ".join(pairs)
+    return f"[{doc_title}] Record -> {row_str}"
 
 
-def process_tabular_pdf(
-    pdf_path: str,
-    source_name: str,
-    content_type_label: str = "tabular",
-) -> List[Dict[str, Any]]:
+def process_tabular_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]:
+    """Extract structured tables row by row using pdfplumber."""
     import pdfplumber
 
+    doc_title = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
     all_chunks: List[Dict[str, Any]] = []
-    pages_with_no_tables: List[int] = []
 
-    with pdfplumber.open(pdf_path) as pdf:
-        for page_num, page in enumerate(pdf.pages, start=1):
-            tables = page.extract_tables()
-            if not tables:
-                pages_with_no_tables.append(page_num)
-                continue
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, start=1):
+                tables = page.extract_tables()
+                if not tables:
+                    continue
 
-            for t_idx, table in enumerate(tables):
-                sentences = _table_to_nl_sentences(
-                    table, source_name, page_num, t_idx,
-                    content_type_label=content_type_label,
-                )
-                all_chunks.extend(sentences)
+                for table in tables:
+                    if not table or len(table) < 2:
+                        continue
+
+                    header_rows: List[List[Optional[str]]] = []
+                    data_start = 0
+
+                    for i, row in enumerate(table):
+                        non_empty = [c for c in row if c and str(c).strip()]
+                        if len(non_empty) >= MIN_ROW_CELLS:
+                            header_rows.append(row)
+                            data_start = i + 1
+                            if i > 0 and not any(
+                                str(c).isdigit() for c in non_empty if c
+                            ):
+                                pass
+                            else:
+                                break
+
+                    headers = _flatten_headers(header_rows)
+
+                    for row_idx, row in enumerate(
+                        table[data_start:], start=data_start + 1
+                    ):
+                        if not any(c and str(c).strip() for c in row):
+                            continue
+
+                        sentence = _row_to_sentence(row, headers, doc_title)
+                        if not sentence:
+                            continue
+
+                        meta: Dict[str, Any] = {
+                            "source": source_name,
+                            "content_type": "tabular",
+                            "page": page_num,
+                            "row": row_idx,
+                        }
+
+                        regn = re.search(r"\b(\d{7})\b", sentence)
+                        if regn:
+                            meta["regn_no"] = regn.group(1)
+
+                        all_chunks.append(
+                            {"content": sentence, "metadata": meta}
+                        )
+
+    except Exception as e:
+        print(f"[PDF Processor] pdfplumber error: {e} -- falling back to text mode.")
+        return process_text_pdf(pdf_path, source_name, "text")
 
     print(f"[PDF Processor] Tabular mode: {len(all_chunks)} row-sentences from tables")
 
-    if pages_with_no_tables:
+    if len(all_chunks) < 3:
         try:
-            loader = PyPDFLoader(pdf_path)
-            pages = loader.load()
-            text_pages = [p for i, p in enumerate(pages, start=1) if i in pages_with_no_tables]
-            valid = [p for p in text_pages if len(p.page_content.strip()) > 50]
-            if valid:
-                splits = TEXT_SPLITTER.split_documents(valid)
-                fallback_label = (
-                    "ocr_text_in_tabular_doc"
-                    if "ocr" in content_type_label
-                    else "text_in_tabular_doc"
-                )
-                for split in splits:
-                    meta = dict(split.metadata)
-                    meta["source"] = source_name
-                    meta["content_type"] = fallback_label
-                    all_chunks.append({"content": split.page_content.strip(), "metadata": meta})
-                print(f"[PDF Processor] + {len(splits)} text chunks from non-table pages")
+            text_chunks = process_text_pdf(pdf_path, source_name, "tabular")
+            if text_chunks:
+                all_chunks.extend(text_chunks)
+                print(f"[PDF Processor] + {len(text_chunks)} text chunks from non-table pages")
         except Exception as e:
             print(f"[PDF Processor] Text fallback error: {e}")
 
     return all_chunks
 
 
-# ── 5. OCR-mode processing ─────────────────────────────────────────────────────
-
-def ocr_page_to_text(page, dpi: int = OCR_DPI) -> str:
-    try:
-        import fitz
-        import pytesseract
-        from PIL import Image
-
-        zoom = dpi / 72
-        mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-
-        img_data = pix.tobytes("png")
-        img = Image.open(io.BytesIO(img_data))
-
-        text = pytesseract.image_to_string(img, lang="eng")
-        return text
-
-    except Exception as e:
-        print(f"[PDF Processor] OCR error on page: {e}")
-        return ""
-
-
-def _ocr_text_looks_tabular(ocr_text: str) -> bool:
-    lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
-    if len(lines) < 3:
-        return False
-
-    multi_col = sum(
-        1 for l in lines
-        if re.search(r"\s{2,}", l) and len(l.split()) >= 2
-    )
-
-    digit_rows = sum(
-        1 for l in lines
-        if len(re.findall(r"\b\d+\b", l)) >= 2
-    )
-
-    ratio = multi_col / len(lines)
-    print(f"[PDF Processor]   [tabular?] multi_col={multi_col}/{len(lines)} ({ratio:.2f}), digit_rows={digit_rows}")
-    return ratio >= 0.35 or digit_rows >= max(3, len(lines) // 5)
-
-
-def _split_ocr_tabular_rows(
-    page_texts: List[Tuple[int, str]],
-    source_name: str,
-) -> List[Dict[str, Any]]:
-    all_chunks: List[Dict[str, Any]] = []
-
-    for page_num, text in page_texts:
-        lines = [l.strip() for l in text.splitlines()]
-        lines = [l for l in lines if re.search(r"[A-Za-z0-9]", l)]
-
-        rows: List[str] = []
-        current: List[str] = []
-
-        for line in lines:
-            if re.match(r"^\d", line):
-                if current:
-                    rows.append(" | ".join(current))
-                current = [line]
-            else:
-                current.append(line)
-
-        if current:
-            rows.append(" | ".join(current))
-
-        for row_text in rows:
-            row_text = row_text.strip()
-            if len(row_text) < 10:
-                continue
-
-            meta: Dict[str, Any] = {
-                "source": source_name,
-                "content_type": "ocr_tabular",
-                "page": page_num,
-                "ocr": True,
-            }
-
-            regn = re.search(r"\b(\d{7})\b", row_text)
-            if regn:
-                meta["regn_no"] = regn.group(1)
-
-            all_chunks.append({"content": row_text, "metadata": meta})
-
-    return all_chunks
-
-
-def process_image_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]:
-    import fitz
-
-    if not _configure_tesseract():
-        print(
-            "[PDF Processor] ⚠ Tesseract not found — OCR skipped. "
-            "Install from https://github.com/UB-Mannheim/tesseract/wiki"
-        )
-        return []
-
-    print(f"[PDF Processor] Image-PDF mode: running OCR on '{Path(pdf_path).name}' …")
-
-    doc = fitz.open(pdf_path)
-    page_texts: List[Tuple[int, str]] = []
-
-    for page_num, page in enumerate(doc, start=1):
-        text = ocr_page_to_text(page, dpi=OCR_DPI)
-        if text.strip():
-            page_texts.append((page_num, text))
-        print(f"[PDF Processor]   Page {page_num}/{len(doc)}: {len(text.strip())} chars from OCR")
-
-    doc.close()
-
-    if not page_texts:
-        print("[PDF Processor] OCR produced no text — check Tesseract language data.")
-        return []
-
-    full_text = "\n\n".join(t for _, t in page_texts)
-    is_tabular = _ocr_text_looks_tabular(full_text)
-    label = "ocr_tabular" if is_tabular else "ocr_text"
-    print(f"[PDF Processor] OCR content classified as: '{label}'")
-
-    if is_tabular:
-        all_chunks = _split_ocr_tabular_rows(page_texts, source_name)
-        print(
-            f"[PDF Processor] Image-PDF mode: {len(page_texts)} pages OCR'd "
-            f"→ {len(all_chunks)} row-chunks (ocr_tabular)"
-        )
-    else:
-        all_chunks: List[Dict[str, Any]] = []
-        for page_num, text in page_texts:
-            if not text.strip():
-                continue
-            splits = TEXT_SPLITTER.split_text(text)
-            for chunk_text in splits:
-                chunk_text = chunk_text.strip()
-                if len(chunk_text) < 30:
-                    continue
-                all_chunks.append({
-                    "content": chunk_text,
-                    "metadata": {
-                        "source": source_name,
-                        "content_type": "ocr_text",
-                        "page": page_num,
-                        "ocr": True,
-                    },
-                })
-        print(
-            f"[PDF Processor] Image-PDF mode: {len(page_texts)} pages OCR'd "
-            f"→ {len(all_chunks)} chunks (ocr_text)"
-        )
-
-    return all_chunks
-
-
-# ── 6. LLM metadata generation ────────────────────────────────────────────────
+# ── 4. LLM metadata generation ────────────────────────────────────────────────
 
 def generate_pdf_metadata(
     filename: str,
     first_text: str,
     content_type: str,
 ) -> Dict[str, str]:
+    """Uses Groq LLaMA model to classify document metadata automatically."""
     excerpt = first_text[:500].strip()
     prompt = f"""You are a metadata generator for a university document management system.
 
@@ -531,7 +274,7 @@ Rules:
         )
         return result
     except Exception as e:
-        print(f"[PDF Processor] Metadata generation failed ({e}) — using filename fallback.")
+        print(f"[PDF Processor] Metadata generation failed ({e}) -- using filename fallback.")
         clean = Path(filename).stem.replace("_", " ").replace("-", " ").strip()
         return {
             "title":       clean,
@@ -542,17 +285,16 @@ Rules:
         }
 
 
-# ── 7. Main entry point ────────────────────────────────────────────────────────
+# ── 5. Main entry point ────────────────────────────────────────────────────────
 
 def process_pdf(pdf_path: str, source_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Entry point for parsing any campus PDF (tabular or text)."""
     if source_name is None:
         source_name = Path(pdf_path).name
 
     content_type = detect_content_type(pdf_path)
 
-    if content_type == "image":
-        chunks = process_image_pdf(pdf_path, source_name)
-    elif content_type == "tabular":
+    if content_type == "tabular":
         chunks = process_tabular_pdf(pdf_path, source_name)
     else:
         chunks = process_text_pdf(pdf_path, source_name)
