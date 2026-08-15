@@ -8,6 +8,8 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ── 2. Vector Documents Table (pgvector 1536 + FTS + HNSW Index) ──────────
+DROP TABLE IF EXISTS public.documents CASCADE;
+
 CREATE TABLE IF NOT EXISTS public.documents (
     id BIGSERIAL PRIMARY KEY,
     content TEXT,
