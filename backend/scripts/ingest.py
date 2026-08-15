@@ -1,14 +1,16 @@
 """
 ingest.py - Batch ingestion script for all PDFs in ../data/pdfs/
 
-How updates are handled:
-  - Before re-inserting a PDF, all existing chunks for that filename are
-    deleted from Supabase first (matched by metadata->filename).
-  - This means you can replace a PDF in data/pdfs/ and re-run this script
-    to get a fresh, up-to-date index with zero duplicates.
+How batch-level resume works:
+  - Automatically checks how many chunks are ALREADY in Supabase for each PDF.
+  - If 1000 out of 1709 chunks are already stored, it SKIPS the first 1000 chunks
+    (0 API calls used) and resumes instantly at batch 101 (chunk 1001)!
+  - Retries up to 10 times with max 60s backoff on rate limits.
 
-Run: python -m scripts.ingest
-     python -m scripts.ingest --file "Fees_Notice_2026.pdf"   (single file)
+Run:
+  python -m scripts.ingest                     (Resumes automatically)
+  python -m scripts.ingest --force             (Clears DB & re-ingests from scratch)
+  python -m scripts.ingest --file "Notice.pdf" (Single file resume/ingest)
 """
 import os
 import sys
@@ -26,22 +28,27 @@ from app.services.pdf_processor import process_pdf
 from app.services.rag_service import get_gemini_embedding
 
 
-def embed_with_retry(texts: list[str], max_retries: int = 5) -> list:
+def embed_with_retry(texts: list[str], max_retries: int = 10) -> list:
+    """
+    Fetch embeddings with robust exponential backoff.
+    Waits up to 60s per attempt and retries up to 10 times so rate limit spikes never fail the job.
+    """
     for attempt in range(max_retries):
         try:
             return [get_gemini_embedding(text) for text in texts]
         except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                wait = 15 * (2 ** attempt)
-                print(f"  Rate limit hit -- waiting {wait}s (attempt {attempt+1}/{max_retries})...")
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str:
+                wait = min(60, 15 * (2 ** attempt))
+                print(f"  Rate limit/Quota hit -- waiting {wait}s (attempt {attempt+1}/{max_retries})...")
                 time.sleep(wait)
             else:
                 raise
-    raise RuntimeError("Embedding failed after max retries.")
+    raise RuntimeError(f"Embedding failed after {max_retries} retries due to quota limits.")
 
 
 def delete_existing_chunks(filename: str) -> int:
-    """Delete all chunks for this filename from Supabase before re-ingesting."""
+    """Delete all chunks for this filename from Supabase."""
     try:
         resp = (
             supabase.table("documents")
@@ -51,24 +58,40 @@ def delete_existing_chunks(filename: str) -> int:
         )
         deleted = len(resp.data) if resp.data else 0
         if deleted:
-            print(f"  Cleared {deleted} old chunk(s) for '{filename}'")
+            print(f"  Cleared {deleted} chunk(s) for '{filename}'")
         return deleted
     except Exception as e:
         print(f"  Warning: Could not clear old chunks for '{filename}': {e}")
         return 0
 
 
-def ingest_file(pdf_path: str) -> int:
-    """Process a single PDF file and upload chunks to Supabase. Returns chunk count."""
+def get_existing_chunk_count(filename: str) -> int:
+    """Check how many chunks are ALREADY saved in Supabase for a file."""
+    try:
+        resp = (
+            supabase.table("documents")
+            .select("id", count="exact")
+            .eq("metadata->>filename", filename)
+            .limit(1)
+            .execute()
+        )
+        return resp.count or 0
+    except Exception as e:
+        print(f"  Warning checking chunk count: {e}")
+        return 0
+
+
+def ingest_file(pdf_path: str, force_reingest: bool = False) -> int:
+    """Process a PDF file and upload remaining chunks to Supabase (resumable)."""
     filename = Path(pdf_path).name
     print(f"\n{'-' * 55}")
     print(f"Processing: {filename}")
 
     try:
-        # Delete existing chunks for this file (handles updates/re-ingestion)
-        delete_existing_chunks(filename)
+        if force_reingest:
+            delete_existing_chunks(filename)
 
-        # Process PDF into chunks
+        # Process PDF into chunks locally (fast)
         chunks = process_pdf(pdf_path, source_name=filename)
 
         if not chunks:
@@ -76,18 +99,38 @@ def ingest_file(pdf_path: str) -> int:
             print(f"  (File may be a scanned image PDF — use a digital copy instead)")
             return 0
 
+        # Attach filename and chunk_index to metadata
+        for idx, c in enumerate(chunks):
+            c["metadata"]["filename"] = filename
+            c["metadata"]["chunk_index"] = idx
+
         content_type = chunks[0]["metadata"].get("content_type", "text")
         print(f"  Content type : {content_type}")
         print(f"  Total chunks : {len(chunks)}")
 
-        # Embed & upload in batches with rate-limit protection
         BATCH_SIZE = 10
         SLEEP_SECS = 7
-        uploaded = 0
+
+        # Check how many chunks are already in Supabase
+        existing_count = 0 if force_reingest else get_existing_chunk_count(filename)
+
+        if existing_count >= len(chunks):
+            print(f"  SKIP: '{filename}' is ALREADY fully indexed ({existing_count}/{len(chunks)} chunks in DB)")
+            return existing_count
+
+        # Align start index to batch boundary
+        start_index = (existing_count // BATCH_SIZE) * BATCH_SIZE
+
+        if start_index > 0:
+            skipped_batches = start_index // BATCH_SIZE
+            print(f"  RESUMING: Found {existing_count} chunks already in DB!")
+            print(f"  Skipping batches 1..{skipped_batches} ({start_index}/{len(chunks)} chunks skipped, 0 API calls used)")
+
+        uploaded = start_index
         total_batches = (len(chunks) + BATCH_SIZE - 1) // BATCH_SIZE
 
-        for i in range(0, len(chunks), BATCH_SIZE):
-            batch = chunks[i:i + BATCH_SIZE]
+        for i in range(start_index, len(chunks), BATCH_SIZE):
+            batch = chunks[i : i + BATCH_SIZE]
             texts = [c["content"] for c in batch]
             batch_embs = embed_with_retry(texts)
             rows = [
@@ -101,7 +144,7 @@ def ingest_file(pdf_path: str) -> int:
             if i + BATCH_SIZE < len(chunks):
                 time.sleep(SLEEP_SECS)
 
-        print(f"  DONE: {uploaded} chunks indexed for '{filename}'")
+        print(f"  DONE: All {uploaded} chunks indexed for '{filename}'")
         return uploaded
 
     except Exception as e:
@@ -109,8 +152,8 @@ def ingest_file(pdf_path: str) -> int:
         return 0
 
 
-def ingest_all(pdf_dir: str = "../data/pdfs") -> None:
-    """Ingest all PDFs found in the given directory (recursive)."""
+def ingest_all(pdf_dir: str = "../data/pdfs", force_reingest: bool = False) -> None:
+    """Ingest all PDFs found in the given directory (resumable by default)."""
     pdf_files = sorted(set(glob.glob(os.path.join(pdf_dir, "**/*.pdf"), recursive=True)))
 
     if not pdf_files:
@@ -126,7 +169,7 @@ def ingest_all(pdf_dir: str = "../data/pdfs") -> None:
 
     total_chunks_all = 0
     for pdf_path in pdf_files:
-        total_chunks_all += ingest_file(pdf_path)
+        total_chunks_all += ingest_file(pdf_path, force_reingest=force_reingest)
 
     print("\n" + "=" * 55)
     print("INGESTION COMPLETE")
@@ -143,6 +186,11 @@ if __name__ == "__main__":
         help="Ingest a single PDF by filename (e.g. --file 'Faculty_List_2026.pdf'). "
              "Must be inside ../data/pdfs/",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force clear DB & re-embed from batch 1 (disables resume mode).",
+    )
     args = parser.parse_args()
 
     if args.file:
@@ -151,7 +199,7 @@ if __name__ == "__main__":
         if not os.path.isfile(pdf_path):
             print(f"ERROR: File not found at '{pdf_path}'")
             sys.exit(1)
-        ingest_file(pdf_path)
+        ingest_file(pdf_path, force_reingest=args.force)
     else:
         # Full batch ingest mode
-        ingest_all()
+        ingest_all(force_reingest=args.force)
