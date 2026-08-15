@@ -28,9 +28,24 @@ export async function apiClient(endpoint, options = {}) {
 
   // Attach token if present and not already provided
   if (!headers['Authorization']) {
-    const studentToken = sessionStorage.getItem('sb-access-token');
-    const adminToken = sessionStorage.getItem('admin-token');
-    
+    let studentToken = sessionStorage.getItem('sb-access-token');
+    if (!studentToken) {
+      try {
+        const storedSession = localStorage.getItem('campusmind_session');
+        if (storedSession) {
+          const session = JSON.parse(storedSession);
+          studentToken = session?.access_token;
+          if (studentToken) {
+            sessionStorage.setItem('sb-access-token', studentToken);
+          }
+        }
+      } catch {
+        // ignore JSON parse error
+      }
+    }
+
+    const adminToken = sessionStorage.getItem('campusmind_admin_token') || sessionStorage.getItem('admin-token');
+
     if (endpoint.startsWith('/api/admin') && adminToken) {
       headers['Authorization'] = `Bearer ${adminToken}`;
     } else if (studentToken) {
