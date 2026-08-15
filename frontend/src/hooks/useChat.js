@@ -112,8 +112,10 @@ export function useChat(userId, onComplaintDetect) {
 
       setMessages((prev) => [...prev, botMessage]);
 
-      if (!activeChatId && data.chat_id) {
-        setActiveChatId(data.chat_id);
+      if (data.chat_id) {
+        if (!activeChatId) {
+          setActiveChatId(data.chat_id);
+        }
         fetchChats();
       }
     } catch (error) {
