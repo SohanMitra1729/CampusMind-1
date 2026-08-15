@@ -105,7 +105,7 @@ async def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]]
                 unique.append(chunk)
 
         top_chunks = unique[:6]
-        print(f"[RAG] Retrieved {len(candidates)} candidates → {len(scored)} above threshold → {len(unique)} unique → {len(top_chunks)} sent to LLM")
+        print(f"[RAG] Retrieved {len(candidates)} candidates --> {len(scored)} above threshold --> {len(unique)} unique --> {len(top_chunks)} sent to LLM")
         return top_chunks
 
     except Exception as e:
