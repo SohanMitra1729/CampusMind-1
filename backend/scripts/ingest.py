@@ -12,19 +12,16 @@ from pathlib import Path
 # Add project root to sys.path so app imports work when run as script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from app.core.config import settings
 from app.db.supabase import supabase
 from app.services.pdf_processor import process_pdf
-
-print("Initializing Google Gemini Embeddings...")
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
+from app.services.rag_service import get_gemini_embedding
 
 
 def embed_with_retry(texts: list[str], max_retries: int = 5) -> list:
     for attempt in range(max_retries):
         try:
-            return embeddings.embed_documents(texts)
+            return [get_gemini_embedding(text) for text in texts]
         except Exception as e:
             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                 wait = 15 * (2 ** attempt)

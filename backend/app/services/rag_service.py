@@ -25,16 +25,32 @@ groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 
 def get_gemini_embedding(text: str) -> List[float]:
-    """Call Google Gemini Embeddings API directly to fetch 3072-dim vector via httpx."""
+    """Call Google Gemini Embeddings API directly to fetch 1536-dim vector via httpx (sync for scripts)."""
     api_key = settings.GOOGLE_API_KEY
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
     payload = {
         "model": "models/gemini-embedding-2",
         "content": {"parts": [{"text": text}]},
-        "outputDimensionality": 3072
+        "outputDimensionality": 1536
     }
     with httpx.Client(timeout=20.0) as client:
         response = client.post(url, json=payload, headers={"Content-Type": "application/json"})
+        response.raise_for_status()
+        data = response.json()
+        return data["embedding"]["values"]
+
+
+async def get_gemini_embedding_async(text: str) -> List[float]:
+    """Call Google Gemini Embeddings API directly to fetch 1536-dim vector via httpx.AsyncClient (non-blocking)."""
+    api_key = settings.GOOGLE_API_KEY
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
+    payload = {
+        "model": "models/gemini-embedding-2",
+        "content": {"parts": [{"text": text}]},
+        "outputDimensionality": 1536
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
         response.raise_for_status()
         data = response.json()
         return data["embedding"]["values"]
@@ -62,10 +78,10 @@ def hybrid_search(
         return []
 
 
-def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+async def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """Query Supabase hybrid_search, then filter by score and deduplicate."""
     try:
-        query_embedding = get_gemini_embedding(query)
+        query_embedding = await get_gemini_embedding_async(query)
         candidates = hybrid_search(
             query_text=query,
             query_embedding=query_embedding,
@@ -125,7 +141,7 @@ def is_personal_result_query(query: str) -> bool:
     return any(kw in q for kw in PERSONAL_RESULT_KEYWORDS)
 
 
-def get_answer(
+async def get_answer(
     query: str,
     metadata_filter: Optional[Dict[str, Any]] = None,
     user_info: Optional[Dict[str, Any]] = None,
@@ -146,7 +162,7 @@ def get_answer(
         else:
             print(f"[RAG] No personal record found for scholar_id={scholar_id}")
 
-    context_items = retrieve_context(query, metadata_filter)
+    context_items = await retrieve_context(query, metadata_filter)
     
     if context_items:
         context_parts = []

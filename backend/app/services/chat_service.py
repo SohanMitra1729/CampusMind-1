@@ -29,7 +29,7 @@ def _build_title(query: str) -> str:
 
 # ── Core pipeline ──────────────────────────────────────────────────────────────
 
-def handle_chat(
+async def handle_chat(
     user_id: str,
     user_info: Dict[str, Any],
     query: str,
@@ -78,7 +78,7 @@ def handle_chat(
     chat_history = chat_repo.get_recent_history(chat_id, limit=6)
 
     # ── Step 4: Run the RAG pipeline ──────────────────────────────────────────
-    result = get_answer(
+    result = await get_answer(
         query,
         metadata_filter=metadata_filter,
         user_info=user_info,

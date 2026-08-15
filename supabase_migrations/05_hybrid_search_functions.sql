@@ -4,7 +4,7 @@
 
 -- 1. Legacy Vector Match Procedure
 CREATE OR REPLACE FUNCTION match_documents (
-    query_embedding VECTOR(3072),
+    query_embedding VECTOR(1536),
     match_count INT DEFAULT NULL,
     filter JSONB DEFAULT '{}'
 )
@@ -34,7 +34,7 @@ $$;
 -- 2. Hybrid RRF Search Procedure (Reciprocal Rank Fusion)
 CREATE OR REPLACE FUNCTION hybrid_search(
     query_text TEXT,
-    query_embedding VECTOR(3072),
+    query_embedding VECTOR(1536),
     match_count INT,
     filter JSONB DEFAULT '{}',
     full_text_weight FLOAT DEFAULT 1.0,

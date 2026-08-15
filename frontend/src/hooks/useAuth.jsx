@@ -2,8 +2,10 @@
  * src/hooks/useAuth.js — Authentication State & Actions Hook
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, createContext, useContext } from 'react';
 import { loginApi, signupApi, forgotPasswordApi, resetPasswordApi, adminAuthApi } from '../api/auth';
+
+const AuthContext = createContext(null);
 
 function getInitialUser() {
   const storedUser = localStorage.getItem('campusmind_user');
@@ -29,7 +31,7 @@ function getInitialAdminToken() {
   return sessionStorage.getItem('campusmind_admin_token') || sessionStorage.getItem('admin-token');
 }
 
-export function useAuth() {
+export function AuthProvider({ children }) {
   const [user, setUser] = useState(getInitialUser);
   const [adminToken, setAdminToken] = useState(getInitialAdminToken);
   const [isLoading, setIsLoading] = useState(false);
@@ -128,7 +130,7 @@ export function useAuth() {
     sessionStorage.removeItem('admin-token');
   }, []);
 
-  return {
+  const value = {
     user,
     adminToken,
     isLoading,
@@ -141,4 +143,14 @@ export function useAuth() {
     logout,
     adminLogout,
   };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
 }

@@ -27,7 +27,7 @@ async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
     user_id   = str(current_user.id)
     user_info = await fetch_profile(user_id)
     try:
-        return chat_service.handle_chat(
+        return await chat_service.handle_chat(
             user_id=user_id,
             user_info=user_info,
             query=request.query,
