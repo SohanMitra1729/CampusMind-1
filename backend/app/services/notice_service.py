@@ -131,6 +131,10 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
     detected_type  = chunks[0]["metadata"].get("content_type", "text")
     total_uploaded = 0
 
+    # ── Clear old chunks for this file (handles re-upload / updates) ───────────
+    doc_repo.delete_document_by_filename(filename)
+    logger.info(f"[NoticeService] Cleared existing chunks for '{filename}' before re-ingestion.")
+
     # ── Embed & store in batches ───────────────────────────────────────────────
     for i in range(0, len(chunks), _BATCH_SIZE):
         batch      = chunks[i : i + _BATCH_SIZE]
@@ -185,6 +189,14 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
     except Exception as agent_err:
         # Agent failure must NOT break the main upload response
         logger.error(f"[NoticeService] Agent pipeline error (non-fatal): {agent_err}")
+
+    # ── Clean up the temp file on disk (chunks are in Supabase, disk file not needed) ──
+    # This is important on cloud deployments (Render) where disk is ephemeral.
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except Exception as cleanup_err:
+        logger.warning(f"[NoticeService] Could not remove temp file '{file_path}': {cleanup_err}")
 
     return {
         "message":               f"Successfully ingested '{filename}'!",
