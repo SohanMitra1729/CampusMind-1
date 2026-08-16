@@ -23,6 +23,10 @@ services:
         sync: false
       - key: STAFF_BOT_WEBHOOK_URL
         sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: ADMIN_SECRET
+        sync: false
       - key: FRONTEND_URL
         sync: false
     rootDir: backend
