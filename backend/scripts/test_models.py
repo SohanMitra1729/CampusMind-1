@@ -11,7 +11,7 @@ api_key = settings.GOOGLE_API_KEY
 print(f"Key starts with: {api_key[:5] if api_key else 'None'}")
 
 client = genai.Client(api_key=api_key)
-print("Available embedding models:")
+print("\nAvailable embedding models:")
 for m in client.models.list():
-    if "embed" in getattr(m, "supported_actions", []):
-        print(m.name)
+    if "embed" in m.name:
+        print(f"  - {m.name}")
