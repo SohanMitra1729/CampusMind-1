@@ -1,9 +1,9 @@
 """
-app/core/key_pool.py — Multi-Key Load Balancing & Automatic 429 Failover Pool
-─────────────────────────────────────────────────────────────────────────────
+app/core/key_pool.py — Multi-Key Load Balancing & Automatic 429/401 Failover Pool
+─────────────────────────────────────────────────────────────────────────────────
 Manages pools of Google Gemini (embeddings) and Groq (completions) API keys
-with automatic instant failover on Rate Limits (429), Resource Exhaustion,
-or Token-Per-Minute (TPM) Quota limits.
+with automatic instant failover on Rate Limits (429), Invalid/Unauthorized keys (401),
+Resource Exhaustion (403), or Token-Per-Minute (TPM) Quota limits.
 """
 
 import time
@@ -15,7 +15,7 @@ from app.core.logger import logger
 
 
 class GeminiKeyPool:
-    """Automatic 429 failover pool for Google Gemini Embeddings API."""
+    """Automatic 429 / 401 failover pool for Google Gemini Embeddings API."""
     def __init__(self):
         self._current_idx = 0
 
@@ -45,6 +45,9 @@ class GeminiKeyPool:
 
         for attempt in range(total_attempts):
             api_key = self.get_current_key()
+            if not api_key:
+                raise RuntimeError("[GeminiKeyPool] No Google Gemini API key configured.")
+
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
             payload = {
                 "model": "models/gemini-embedding-2",
@@ -54,26 +57,26 @@ class GeminiKeyPool:
             try:
                 with httpx.Client(timeout=20.0) as client:
                     resp = client.post(url, json=payload, headers={"Content-Type": "application/json"})
-                    if resp.status_code == 429 or "RESOURCE_EXHAUSTED" in resp.text:
+                    if resp.status_code in (401, 403, 429) or "RESOURCE_EXHAUSTED" in resp.text:
                         logger.warning(
-                            f"[GeminiKeyPool] Key index {self._current_idx + 1} hit 429 rate limit. Rotating..."
+                            f"[GeminiKeyPool] Key index {self._current_idx + 1} returned status {resp.status_code}. Rotating..."
                         )
                         self.rotate_key()
-                        time.sleep(1)
+                        time.sleep(0.5)
                         continue
                     resp.raise_for_status()
                     data = resp.json()
                     return data["embedding"]["values"]
             except Exception as e:
                 last_err = e
-                err_msg = str(e)
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "quota" in err_msg.lower():
-                    logger.warning(f"[GeminiKeyPool] Rate limit encountered ({e}). Rotating to next key...")
+                err_msg = str(e).lower()
+                if any(x in err_msg for x in ["401", "403", "429", "unauthorized", "resource_exhausted", "quota"]):
+                    logger.warning(f"[GeminiKeyPool] Error with key index {self._current_idx + 1} ({e}). Rotating...")
                     self.rotate_key()
-                    time.sleep(1)
+                    time.sleep(0.5)
                 else:
                     raise e
-        raise RuntimeError(f"[GeminiKeyPool] All {len(keys)} Gemini keys exhausted or rate-limited: {last_err}")
+        raise RuntimeError(f"[GeminiKeyPool] All {len(keys)} Gemini keys failed: {last_err}")
 
     async def get_embedding_async(self, text: str, max_retries_per_key: int = 2) -> List[float]:
         keys = self.keys
@@ -82,6 +85,9 @@ class GeminiKeyPool:
 
         for attempt in range(total_attempts):
             api_key = self.get_current_key()
+            if not api_key:
+                raise RuntimeError("[GeminiKeyPool] No Google Gemini API key configured.")
+
             url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
             payload = {
                 "model": "models/gemini-embedding-2",
@@ -91,9 +97,9 @@ class GeminiKeyPool:
             try:
                 async with httpx.AsyncClient(timeout=20.0) as client:
                     resp = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
-                    if resp.status_code == 429 or "RESOURCE_EXHAUSTED" in resp.text:
+                    if resp.status_code in (401, 403, 429) or "RESOURCE_EXHAUSTED" in resp.text:
                         logger.warning(
-                            f"[GeminiKeyPool] Async Key index {self._current_idx + 1} hit 429 rate limit. Rotating..."
+                            f"[GeminiKeyPool] Async Key index {self._current_idx + 1} returned status {resp.status_code}. Rotating..."
                         )
                         self.rotate_key()
                         continue
@@ -102,17 +108,17 @@ class GeminiKeyPool:
                     return data["embedding"]["values"]
             except Exception as e:
                 last_err = e
-                err_msg = str(e)
-                if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "quota" in err_msg.lower():
-                    logger.warning(f"[GeminiKeyPool] Async Rate limit encountered ({e}). Rotating key...")
+                err_msg = str(e).lower()
+                if any(x in err_msg for x in ["401", "403", "429", "unauthorized", "resource_exhausted", "quota"]):
+                    logger.warning(f"[GeminiKeyPool] Async error with key index {self._current_idx + 1} ({e}). Rotating...")
                     self.rotate_key()
                 else:
                     raise e
-        raise RuntimeError(f"[GeminiKeyPool] All {len(keys)} Gemini keys exhausted or rate-limited: {last_err}")
+        raise RuntimeError(f"[GeminiKeyPool] All {len(keys)} Gemini keys failed: {last_err}")
 
 
 class GroqKeyPool:
-    """Automatic 429 failover pool for Groq chat completions."""
+    """Automatic 429 / 401 failover pool for Groq chat completions."""
     def __init__(self):
         self._current_idx = 0
 
@@ -150,8 +156,8 @@ class GroqKeyPool:
             except Exception as e:
                 last_err = e
                 err_msg = str(e).lower()
-                if "429" in err_msg or "rate limit" in err_msg or "tpm" in err_msg:
-                    logger.warning(f"[GroqKeyPool] Key index {self._current_idx + 1} rate limited ({e}). Rotating...")
+                if any(x in err_msg for x in ["401", "429", "rate limit", "tpm", "invalid_api_key", "invalid api key"]):
+                    logger.warning(f"[GroqKeyPool] Key index {self._current_idx + 1} error ({e}). Rotating...")
                     self.rotate_key()
                 else:
                     raise e
@@ -172,8 +178,8 @@ class GroqKeyPool:
             except Exception as e:
                 last_err = e
                 err_msg = str(e).lower()
-                if "429" in err_msg or "rate limit" in err_msg or "tpm" in err_msg:
-                    logger.warning(f"[GroqKeyPool] Async Stream Key index {self._current_idx + 1} rate limited ({e}). Rotating...")
+                if any(x in err_msg for x in ["401", "429", "rate limit", "tpm", "invalid_api_key", "invalid api key"]):
+                    logger.warning(f"[GroqKeyPool] Async Stream Key index {self._current_idx + 1} error ({e}). Rotating...")
                     self.rotate_key()
                 else:
                     raise e
