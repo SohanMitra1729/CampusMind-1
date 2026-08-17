@@ -4,7 +4,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Shield, ArrowLeft, Megaphone, AlertCircle, Database } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../components/ui/Button';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import DocumentIngestion from '../components/admin/DocumentIngestion';
 import NoticeBroadcast from '../components/admin/NoticeBroadcast';
 import ComplaintManagement from '../components/admin/ComplaintManagement';
@@ -33,6 +35,8 @@ export default function AdminPage({ onBack }) {
   const [uploadStep, setUploadStep] = useState('');
   const [uploadAlert, setUploadAlert] = useState(null);
   const [agentResult, setAgentResult] = useState(null);
+  const [docToDelete, setDocToDelete] = useState(null);
+  const [isDeletingDoc, setIsDeletingDoc] = useState(false);
   const fileInputRef = useRef(null);
 
   // ── Post Notice state ──
@@ -69,6 +73,7 @@ export default function AdminPage({ onBack }) {
       setDocuments(data || []);
     } catch (e) {
       console.error('Failed to load documents', e);
+      toast.error('Failed to load knowledge base documents.');
     } finally {
       setIsLoadingDocs(false);
     }
@@ -81,6 +86,7 @@ export default function AdminPage({ onBack }) {
       setPostedNotices(data || []);
     } catch (e) {
       console.error('Failed to load notices', e);
+      toast.error('Failed to load broadcasts list.');
     } finally {
       setIsLoadingNotices(false);
     }
@@ -103,7 +109,9 @@ export default function AdminPage({ onBack }) {
     const file = e.target.files?.[0];
     if (file) {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
-        setUploadAlert({ type: 'error', text: 'Please select a valid PDF document.' });
+        const err = 'Please select a valid PDF document.';
+        setUploadAlert({ type: 'error', text: err });
+        toast.error(err);
         return;
       }
       setSelectedFile(file);
@@ -117,7 +125,9 @@ export default function AdminPage({ onBack }) {
     const file = e.dataTransfer.files?.[0];
     if (file) {
       if (!file.name.toLowerCase().endsWith('.pdf')) {
-        setUploadAlert({ type: 'error', text: 'Only PDF documents are accepted.' });
+        const err = 'Only PDF documents are accepted.';
+        setUploadAlert({ type: 'error', text: err });
+        toast.error(err);
         return;
       }
       setSelectedFile(file);
@@ -144,11 +154,10 @@ export default function AdminPage({ onBack }) {
       [t1, t2, t3, t4, t5].forEach(clearTimeout);
 
       const typeLabel = data.content_type_detected === 'tabular' ? 'Tabular' : 'Text';
+      const msg = `Ingested '${selectedFile.name}' (${typeLabel}) — ${data.chunks_created} chunks indexed.`;
 
-      setUploadAlert({
-        type: 'success',
-        text: `Ingested '${selectedFile.name}' (${typeLabel}) — ${data.chunks_created} chunks indexed.`,
-      });
+      setUploadAlert({ type: 'success', text: msg });
+      toast.success(msg);
 
       if (data.agent) {
         setAgentResult(data.agent);
@@ -160,27 +169,41 @@ export default function AdminPage({ onBack }) {
       fetchPostedNotices();
     } catch (err) {
       setUploadAlert({ type: 'error', text: err.message });
+      toast.error(err.message || 'PDF ingestion failed.');
     } finally {
       setIsUploading(false);
       setUploadStep('');
     }
   };
 
-  const handleDelete = async (filename) => {
-    if (!window.confirm(`Remove '${filename}' from the knowledge base?`)) return;
+  const handleDeletePrompt = (filename) => {
+    setDocToDelete(filename);
+  };
+
+  const confirmDeleteDoc = async () => {
+    if (!docToDelete) return;
+    setIsDeletingDoc(true);
+
     try {
-      await deleteDocumentApi(filename);
-      setUploadAlert({ type: 'success', text: `Removed '${filename}' from database.` });
+      await deleteDocumentApi(docToDelete);
+      toast.success(`Removed '${docToDelete}' from knowledge base.`);
+      setUploadAlert({ type: 'success', text: `Removed '${docToDelete}' from database.` });
+      setDocToDelete(null);
       fetchDocuments();
     } catch (err) {
+      toast.error(err.message || 'Failed to remove document.');
       setUploadAlert({ type: 'error', text: err.message });
+    } finally {
+      setIsDeletingDoc(false);
     }
   };
 
   const handlePostNotice = async (e) => {
     e.preventDefault();
     if (!noticeTitle.trim() || !noticeContent.trim()) {
-      setNoticeAlert({ type: 'error', text: 'Both title and content are required.' });
+      const err = 'Both title and content are required.';
+      setNoticeAlert({ type: 'error', text: err });
+      toast.error(err);
       return;
     }
     setIsPostingNotice(true);
@@ -191,11 +214,13 @@ export default function AdminPage({ onBack }) {
       const data = await postNoticeApi(noticeTitle, noticeContent);
       setNoticeResult(data);
       setNoticeAlert({ type: 'success', text: 'Notice posted successfully!' });
+      toast.success('Notice broadcasted successfully!');
       setNoticeTitle('');
       setNoticeContent('');
       fetchPostedNotices();
     } catch (err) {
       setNoticeAlert({ type: 'error', text: err.message });
+      toast.error(err.message || 'Failed to broadcast notice.');
     } finally {
       setIsPostingNotice(false);
     }
@@ -211,6 +236,17 @@ export default function AdminPage({ onBack }) {
 
   return (
     <div className="admin-layout">
+      <ConfirmDialog
+        open={Boolean(docToDelete)}
+        onOpenChange={(open) => { if (!open) setDocToDelete(null); }}
+        title="Remove Document from Knowledge Base?"
+        description={`Are you sure you want to delete '${docToDelete}'? All vector embeddings associated with this file will be permanently removed.`}
+        confirmLabel="Remove Document"
+        variant="destructive"
+        isLoading={isDeletingDoc}
+        onConfirm={confirmDeleteDoc}
+      />
+
       <header className="admin-navbar">
         <div className="admin-brand">
           <div className="admin-brand-icon">
@@ -259,7 +295,7 @@ export default function AdminPage({ onBack }) {
               uploadStep={uploadStep}
               uploadAlert={uploadAlert}
               agentResult={agentResult}
-              handleDelete={handleDelete}
+              handleDelete={handleDeletePrompt}
               fetchDocuments={fetchDocuments}
             />
           )}

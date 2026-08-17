@@ -2,20 +2,26 @@
 app/routers/complaints.py — Complaint Management Routes
 ────────────────────────────────────────────────────────
 Handles:
-  POST   /api/complaint/classify
+  GET    /api/hostels
   POST   /api/complaint
   POST   /api/complaint/{complaint_id}/vote
   GET    /api/my-complaints
   GET    /api/admin/complaints
   PATCH  /api/admin/complaints/{complaint_id}/status
-  GET    /api/hostels
 """
 
 from typing import Any, Dict, Optional
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 
 from app.core.security import get_current_user, require_admin
 from app.core.deps import fetch_profile
+from app.core.logger import logger
+from app.core.exceptions import (
+    ValidationException,
+    NotFoundException,
+    ConflictException,
+    InternalServerErrorException,
+)
 from app.schemas.complaint import (
     ComplaintRequest,
     ComplaintStatusRequest,
@@ -33,11 +39,11 @@ async def list_hostels():
     try:
         return complaint_service.get_hostels()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[Complaints] list_hostels error: {e}")
+        raise InternalServerErrorException("Failed to fetch hostels list.")
 
 
 # ── Student: complaints ────────────────────────────────────────────────────────
-
 
 @router.post("/api/complaint")
 async def submit_complaint(req: ComplaintRequest, current_user=Depends(get_current_user)):
@@ -52,9 +58,10 @@ async def submit_complaint(req: ComplaintRequest, current_user=Depends(get_curre
             room_number=req.room_number,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise ValidationException(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Complaint submission failed: {str(e)}")
+        logger.exception(f"[Complaints] Complaint submission failed: {e}")
+        raise InternalServerErrorException("Complaint submission failed. Please try again.")
 
 
 @router.post("/api/complaint/{complaint_id}/vote")
@@ -65,9 +72,10 @@ async def vote_complaint(complaint_id: str, current_user=Depends(get_current_use
     try:
         return complaint_service.vote(complaint_id, user_info)
     except PermissionError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        raise ConflictException(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Vote failed: {str(e)}")
+        logger.exception(f"[Complaints] Vote failed for complaint {complaint_id}: {e}")
+        raise InternalServerErrorException("Failed to register vote.")
 
 
 @router.get("/api/my-complaints")
@@ -76,7 +84,8 @@ async def get_my_complaints(current_user=Depends(get_current_user)):
     try:
         return complaint_service.get_user_complaints(str(current_user.id))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[Complaints] get_my_complaints error: {e}")
+        raise InternalServerErrorException("Failed to fetch complaints history.")
 
 
 # ── Admin: complaints ──────────────────────────────────────────────────────────
@@ -100,7 +109,8 @@ async def list_complaints(
             limit=limit,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[Complaints] list_complaints admin error: {e}")
+        raise InternalServerErrorException("Failed to load complaints.")
 
 
 @router.patch("/api/admin/complaints/{complaint_id}/status")
@@ -113,8 +123,9 @@ async def update_complaint_status(
     try:
         return complaint_service.update_complaint_status(complaint_id, req.status)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise ValidationException(str(e))
     except LookupError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise NotFoundException(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[Complaints] update_complaint_status error: {e}")
+        raise InternalServerErrorException("Failed to update complaint status.")

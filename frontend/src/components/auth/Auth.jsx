@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import { Eye, EyeOff, Mail, Lock, Hash, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../ui/Card';
@@ -32,35 +33,32 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
       if (view === 'login') {
         const identifier = email || username;
         const user = await login(identifier, password);
+        toast.success(`Welcome back, ${user.name || user.username || 'Student'}!`);
         onAuthSuccess(user);
       } else if (view === 'signup') {
         await signup({ name: name.trim(), username: username.trim(), email: email.trim(), scholar_id: scholarId.trim(), password });
-        setLocalAlert({
-          type: 'success',
-          text: 'Account created! Check your email to confirm registration before signing in.',
-        });
+        const successMsg = 'Account created! Check your email to confirm registration before signing in.';
+        setLocalAlert({ type: 'success', text: successMsg });
+        toast.success(successMsg);
         setView('login');
         setPassword('');
       } else if (view === 'forgot-password') {
         await forgotPassword(email.trim());
-        setLocalAlert({
-          type: 'success',
-          text: 'Password reset link sent! Check your inbox.',
-        });
+        const msg = 'Password reset link sent! Check your inbox.';
+        setLocalAlert({ type: 'success', text: msg });
+        toast.success(msg);
       } else if (view === 'reset-password') {
         await resetPassword(initialResetToken, password);
-        setLocalAlert({
-          type: 'success',
-          text: 'Password updated! Please log in with your new password.',
-        });
+        const msg = 'Password updated! Please log in with your new password.';
+        setLocalAlert({ type: 'success', text: msg });
+        toast.success(msg);
         setView('login');
         setPassword('');
       }
     } catch (err) {
-      setLocalAlert({
-        type: 'error',
-        text: err.message || 'An unexpected error occurred.',
-      });
+      const errMsg = err.message || 'An unexpected error occurred.';
+      setLocalAlert({ type: 'error', text: errMsg });
+      toast.error(errMsg);
     }
   };
 

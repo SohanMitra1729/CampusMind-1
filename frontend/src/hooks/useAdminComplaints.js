@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { toast } from 'sonner';
 import { getAdminComplaintsApi, updateComplaintStatusApi } from '../api/complaints';
 
 export function useAdminComplaints() {
@@ -24,6 +25,7 @@ export function useAdminComplaints() {
       setComplaints(data || []);
     } catch (e) {
       console.error('Failed to load complaints', e);
+      toast.error('Failed to load student complaints.');
     } finally {
       setIsLoadingComplaints(false);
     }
@@ -38,8 +40,10 @@ export function useAdminComplaints() {
           .map(comp => comp.id === complaintId ? { ...comp, status: newStatus } : comp)
           .filter(item => !complaintStatusFilter || item.status === complaintStatusFilter)
       );
+      toast.success(`Complaint marked as "${newStatus.replace('_', ' ')}".`);
     } catch (e) {
       console.error('Failed to update complaint status', e);
+      toast.error(e.message || 'Failed to update complaint status.');
     } finally {
       setUpdatingComplaintId(null);
     }

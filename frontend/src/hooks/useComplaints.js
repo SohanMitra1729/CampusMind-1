@@ -6,6 +6,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { toast } from 'sonner';
 import { voteComplaintApi, getMyComplaintsApi } from '../api/complaints';
 
 export function useComplaints(userId) {
@@ -25,6 +26,7 @@ export function useComplaints(userId) {
       setMyComplaints(data || []);
     } catch (e) {
       console.error('Failed to fetch my complaints', e);
+      toast.error('Failed to load your complaints.');
     } finally {
       setMyComplaintsLoading(false);
     }
@@ -32,7 +34,10 @@ export function useComplaints(userId) {
 
   // ── Upvote an existing complaint ───────────────────────────────────────
   const upvoteComplaint = useCallback(async (complaintId) => {
-    if (votedComplaints.has(complaintId)) return;
+    if (votedComplaints.has(complaintId)) {
+      toast.info('You have already upvoted this complaint.');
+      return;
+    }
     try {
       await voteComplaintApi(complaintId);
       setVotedComplaints(prev => new Set([...prev, complaintId]));
@@ -41,8 +46,10 @@ export function useComplaints(userId) {
           c.id === complaintId ? { ...c, vote_count: (c.vote_count || 0) + 1 } : c
         )
       );
+      toast.success('Complaint upvoted! 👍');
     } catch (err) {
       console.error('Vote error:', err);
+      toast.error(err.message || 'Failed to upvote complaint.');
     }
   }, [votedComplaints]);
 
@@ -56,5 +63,3 @@ export function useComplaints(userId) {
     upvoteComplaint,
   };
 }
-
-

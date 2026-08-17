@@ -32,7 +32,7 @@ export default function MessageList({
 
         {messages.map((msg) => (
           <div key={msg.id} className={`chat-bubble-row ${msg.role === 'user' ? 'user' : 'bot'}`}>
-            <div className={`chat-bubble ${msg.role === 'user' ? 'user' : 'bot'}`}>
+            <div className={`chat-bubble ${msg.role === 'user' ? 'user' : 'bot'} ${msg.isError ? 'is-error' : ''}`}>
               <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '4px', opacity: 0.8 }}>
                 {msg.role === 'user' ? 'You' : 'CampusMind AI'}
               </div>

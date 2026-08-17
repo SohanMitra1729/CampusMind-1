@@ -2,7 +2,7 @@
  * src/components/chat/Sidebar.jsx — Chat History & Navigation Sidebar
  */
 
-import { Plus, MessageSquare, Trash2, LogOut, ChevronDown, Sparkles, X } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, LogOut, Sparkles, X } from 'lucide-react';
 
 export default function Sidebar({
   user,
@@ -68,7 +68,7 @@ export default function Sidebar({
                 <span className="chat-history-text">{chat.title}</span>
                 <button
                   className="chat-delete-btn"
-                  onClick={(e) => onDeleteChat(e, chat.id)}
+                  onClick={(e) => onDeleteChat(e, chat)}
                   title="Delete chat"
                 >
                   <Trash2 size={14} />

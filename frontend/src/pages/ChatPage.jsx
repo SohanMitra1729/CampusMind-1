@@ -8,6 +8,7 @@ import Sidebar from '../components/chat/Sidebar';
 import MessageList from '../components/chat/MessageList';
 import NotificationDrawer from '../components/chat/NotificationDrawer';
 import MyComplaintsModal from '../components/chat/MyComplaintsModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useNotifications } from '../hooks/useNotifications';
 import { useChat } from '../hooks/useChat';
 import { useComplaints } from '../hooks/useComplaints';
@@ -33,7 +34,6 @@ export default function ChatPage({ user, onLogout }) {
     myComplaints,
     myComplaintsLoading,
     fetchMyComplaints,
-    upvoteComplaint,
   } = useComplaints(user?.id);
 
   const {
@@ -44,9 +44,13 @@ export default function ChatPage({ user, onLogout }) {
     handleInputChange,
     isLoading,
     messagesEndRef,
+    chatToDelete,
+    setChatToDelete,
+    isDeletingChat,
+    confirmDeleteChat,
     loadChat,
     handleNewChat,
-    handleDeleteChat,
+    handleDeleteChatPrompt,
     handleQuickAction,
     sendMessage,
   } = useChat(user?.id);
@@ -72,7 +76,7 @@ export default function ChatPage({ user, onLogout }) {
         setSidebarOpen={setSidebarOpen}
         onNewChat={handleNewChat}
         onLoadChat={loadChat}
-        onDeleteChat={handleDeleteChat}
+        onDeleteChat={handleDeleteChatPrompt}
         onOpenMyComplaints={() => { setShowMyComplaints(true); fetchMyComplaints(); }}
         onLogout={onLogout}
       >
@@ -88,6 +92,17 @@ export default function ChatPage({ user, onLogout }) {
           onToggleRead={toggleRead}
         />
       </Sidebar>
+
+      <ConfirmDialog
+        open={Boolean(chatToDelete)}
+        onOpenChange={(open) => { if (!open) setChatToDelete(null); }}
+        title="Delete Conversation?"
+        description={`Are you sure you want to delete "${chatToDelete?.title || 'this conversation'}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        variant="destructive"
+        isLoading={isDeletingChat}
+        onConfirm={confirmDeleteChat}
+      />
 
       <main className="chat-main">
         <header className="chat-header-bar">

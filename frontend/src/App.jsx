@@ -10,6 +10,7 @@
 
 import { useCallback } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import ChatPage from './pages/ChatPage';
 import AuthPage from './pages/AuthPage';
 import AdminLoginPage from './pages/AdminLoginPage';
@@ -99,6 +100,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <Toaster richColors position="top-right" theme="dark" closeButton />
         <AppRoutes />
       </AuthProvider>
     </BrowserRouter>

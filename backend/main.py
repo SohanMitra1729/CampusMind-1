@@ -14,8 +14,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from fastapi.exceptions import RequestValidationError
 from app.core.config import settings
-from app.core.exceptions import AppException, app_exception_handler
+from app.core.exceptions import (
+    AppException,
+    app_exception_handler,
+    validation_exception_handler,
+    unhandled_exception_handler,
+)
 from app.core.logger import logger
 from app.routers import auth, chat, notices, complaints, webhooks
 from app.services.telegram_bot import setup_webhook
@@ -39,8 +45,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Global Domain Exception Handler ───────────────────────────────────────────
+# ── Global Exception Handlers ──────────────────────────────────────────────────
 app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # ── CORS Middleware ───────────────────────────────────────────────────────────
 app.add_middleware(
