@@ -52,6 +52,10 @@ export default function AdminPage({ onBack }) {
     setComplaintStatusFilter,
     complaintCategoryFilter,
     setComplaintCategoryFilter,
+    complaintStaffRoleFilter,
+    setComplaintStaffRoleFilter,
+    complaintScopeFilter,
+    setComplaintScopeFilter,
     updatingComplaintId,
     fetchComplaints,
     updateComplaintStatus,
@@ -286,6 +290,10 @@ export default function AdminPage({ onBack }) {
               setComplaintStatusFilter={setComplaintStatusFilter}
               complaintCategoryFilter={complaintCategoryFilter}
               setComplaintCategoryFilter={setComplaintCategoryFilter}
+              complaintStaffRoleFilter={complaintStaffRoleFilter}
+              setComplaintStaffRoleFilter={setComplaintStaffRoleFilter}
+              complaintScopeFilter={complaintScopeFilter}
+              setComplaintScopeFilter={setComplaintScopeFilter}
               fetchComplaints={fetchComplaints}
               updateComplaintStatus={updateComplaintStatus}
               updatingComplaintId={updatingComplaintId}

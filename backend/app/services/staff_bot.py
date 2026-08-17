@@ -28,6 +28,7 @@ CATEGORY_TO_ROLE: Dict[str, str] = {
 ROLE_ICONS: Dict[str, str] = {
     "electrical":    "⚡",
     "cleaning":      "🧹",
+    "maintenance":   "🛠️",
     "mess_manager":  "🍽️",
     "watchmen":      "🔒",
 }
@@ -35,6 +36,7 @@ ROLE_ICONS: Dict[str, str] = {
 ROLE_LABELS: Dict[str, str] = {
     "electrical":   "Electrical / Maintenance",
     "cleaning":     "Cleaning Staff",
+    "maintenance":  "Maintenance (Furniture / Plumbing / Civil)",
     "mess_manager": "Mess Manager",
     "watchmen":     "Watchmen / Security",
 }
@@ -141,6 +143,8 @@ def _role_keyboard() -> Dict:
           "callback_data": "role:electrical"}],
         [{"text": f"{ROLE_ICONS['cleaning']} Cleaning Staff",
           "callback_data": "role:cleaning"}],
+        [{"text": f"{ROLE_ICONS['maintenance']} Maintenance (Furniture / Plumbing)",
+          "callback_data": "role:maintenance"}],
         [{"text": f"{ROLE_ICONS['mess_manager']} Mess Manager",
           "callback_data": "role:mess_manager"}],
         [{"text": f"{ROLE_ICONS['watchmen']} Watchmen / Security",
@@ -273,39 +277,60 @@ def send_complaint_to_staff(
     student_name: str,
     _db=None,
     staff_role: Optional[str] = None,
+    scope: Optional[str] = None,
+    mess_id: Optional[str] = None,
 ):
     if not STAFF_BOT_TOKEN:
         logger.info("[StaffBot] STAFF_BOT_TOKEN not set. Complaint not forwarded.")
         return
 
-    role = staff_role or CATEGORY_TO_ROLE.get(category, "watchmen")
-    if not role:
-        logger.info(f"[StaffBot] No staff role determined for category={category}. Skipping forward.")
+    # ── Categories not handled by hostel staff — do NOT misroute to watchmen ──
+    NON_HOSTEL_CATEGORIES = {"academic", "admin", "transport"}
+    if category in NON_HOSTEL_CATEGORIES:
+        logger.info(
+            f"[StaffBot] Skipping forward: category={category} is not handled by hostel staff. "
+            f"staff_role={staff_role}. No Telegram notification sent."
+        )
         return
 
-    logger.info(f"[StaffBot] Routing complaint to role={role} (staff_role={staff_role}, category={category})")
+    # ── Determine role: LLM assignment takes priority; fallback to category map ──
+    if not staff_role or staff_role == "none":
+        role = CATEGORY_TO_ROLE.get(category)
+        if not role:
+            logger.info(
+                f"[StaffBot] No staff role determined for category={category}. Skipping forward."
+            )
+            return
+    else:
+        role = staff_role
+
+    logger.info(f"[StaffBot] Routing complaint to role={role} (scope={scope}, mess_id={mess_id}, hostel={hostel_id})")
 
     staff_list = []
     try:
         query = (
             supabase.table("staff_members")
-            .select("telegram_chat_id, role, hostel_id")
+            .select("telegram_chat_id, role, hostel_id, mess_id")
             .eq("role", role)
             .eq("active", True)
         )
-        if hostel_id:
+        # For mess managers, match by mess_id if available, otherwise hostel_id
+        if role == "mess_manager" and mess_id:
+            query = query.eq("mess_id", mess_id)
+        elif hostel_id:
             query = query.eq("hostel_id", hostel_id)
+
         res = query.execute()
         staff_list = res.data or []
-        logger.info(f"[StaffBot] Pass 1 (role={role}, hostel={hostel_id}): found {len(staff_list)} staff")
+        logger.info(f"[StaffBot] Pass 1 (role={role}, hostel={hostel_id}, mess_id={mess_id}): found {len(staff_list)} staff")
     except Exception as e:
         logger.error(f"[StaffBot] staff query error (pass 1): {e}")
 
-    if not staff_list and hostel_id:
+    if not staff_list and (hostel_id or mess_id):
         try:
             res2 = (
                 supabase.table("staff_members")
-                .select("telegram_chat_id, role, hostel_id")
+                .select("telegram_chat_id, role, hostel_id, mess_id")
                 .eq("role", role)
                 .eq("active", True)
                 .execute()
@@ -319,7 +344,7 @@ def send_complaint_to_staff(
         logger.warning(f"[StaffBot] No active staff found for role={role} in any hostel. Cannot forward complaint.")
         return
 
-    location_line = f"🏠 Hostel: *{hostel_name}*"
+    location_line = f"🏠 Facility: *{hostel_name}*"
     if room_number:
         location_line += f"  |  🚪 Room: *{room_number}*"
 
@@ -328,9 +353,20 @@ def send_complaint_to_staff(
         "academic": "📚", "transport": "🚌", "general": "📢",
     }.get(category, "📢")
 
+    role_label = ROLE_LABELS.get(role, role)
+    role_icon  = ROLE_ICONS.get(role, "🔧")
+
+    scope_display = {
+        "MESS": "🍽️ Dining / Mess",
+        "ROOM_SHARED": "👥 Room (Shared Fixture)",
+        "ROOM_INDIVIDUAL": "👤 Personal Item",
+        "COMMON_AREA": "🏢 Common / Floor Area",
+    }.get(scope, "🏢 General")
+
     msg = (
         f"🚨 *New Complaint Assigned*\n\n"
-        f"{cat_icon} Category: *{category.capitalize()}*\n"
+        f"{cat_icon} Category: *{category.capitalize()}* ({scope_display})\n"
+        f"{role_icon} Assigned To: *{role_label}*\n"
         f"{location_line}\n"
         f"👤 Student: {student_name}\n\n"
         f"*{title}*\n"

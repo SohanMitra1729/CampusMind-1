@@ -11,17 +11,23 @@ from app.db.supabase import supabase
 # ── Hostels ─────────────────────────────────────────────────────────────────────
 
 def get_all_hostels() -> List[Dict[str, Any]]:
-    """Fetch all hostels for frontend dropdowns."""
-    res = supabase.table("hostels").select("id, name, code").order("code").execute()
+    """Fetch all hostels for frontend dropdowns and dialogue matching."""
+    res = supabase.table("hostels").select("id, name, code, gender, target_years, sharing_types, sharing_description, mess_id, mess_name, aliases").order("name").execute()
     return res.data or []
 
 
 def get_hostel_by_id(hostel_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch a single hostel by UUID."""
+    """Fetch a single hostel by UUID with topology details."""
     if not hostel_id:
         return None
     try:
-        res = supabase.table("hostels").select("name, code").eq("id", hostel_id).single().execute()
+        res = (
+            supabase.table("hostels")
+            .select("id, name, code, gender, target_years, sharing_types, sharing_description, mess_id, mess_name, aliases")
+            .eq("id", hostel_id)
+            .single()
+            .execute()
+        )
         return res.data
     except Exception:
         return None
@@ -48,7 +54,7 @@ def get_user_complaints(user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
     """Fetch all complaints submitted by a specific student, newest first."""
     res = (
         supabase.table("complaints")
-        .select("id, title, description, category, status, vote_count, hostel_details, created_at, updated_at")
+        .select("id, title, description, category, status, staff_role, scope, mess_id, vote_count, hostel_details, created_at, updated_at")
         .eq("user_id", user_id)
         .order("created_at", desc=True)
         .limit(limit)
@@ -60,13 +66,15 @@ def get_user_complaints(user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
 def get_all_complaints(
     status: Optional[str] = None,
     category: Optional[str] = None,
+    staff_role: Optional[str] = None,
+    scope: Optional[str] = None,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Admin query: fetch complaints with optional filtering by status and category."""
+    """Admin query: fetch complaints with optional filtering by status, category, staff_role, scope."""
     query = (
         supabase.table("complaints")
         .select("id, user_id, scholar_id, student_name, title, description, "
-                "category, status, hostel_details, vote_count, created_at, updated_at")
+                "category, status, staff_role, scope, mess_id, hostel_details, hostel_id, room_number, vote_count, created_at, updated_at")
         .order("created_at", desc=True)
         .limit(limit)
     )
@@ -74,6 +82,10 @@ def get_all_complaints(
         query = query.eq("status", status)
     if category:
         query = query.eq("category", category)
+    if staff_role:
+        query = query.eq("staff_role", staff_role)
+    if scope:
+        query = query.eq("scope", scope)
 
     res = query.execute()
     return res.data or []
@@ -90,11 +102,53 @@ def update_complaint_status(complaint_id: str, status: str) -> Optional[Dict[str
     return res.data[0] if res.data else None
 
 
+def get_open_complaints_by_scope(
+    scope: str,
+    mess_id: Optional[str] = None,
+    hostel_id: Optional[str] = None,
+    room_number: Optional[str] = None,
+    limit: int = 20,
+) -> List[Dict[str, Any]]:
+    """Query open complaints filtered by specific scope context for high-precision deduplication."""
+    query = supabase.table("complaints").select("id, title, description, category, staff_role, scope, mess_id, hostel_id, room_number, vote_count, status").in_("status", ["open", "in_progress"])
+    
+    if scope == "MESS" and mess_id:
+        query = query.eq("scope", "MESS").eq("mess_id", mess_id)
+    elif scope == "ROOM_SHARED" and hostel_id and room_number:
+        query = query.eq("scope", "ROOM_SHARED").eq("hostel_id", hostel_id).eq("room_number", room_number)
+    else:
+        if hostel_id:
+            query = query.eq("hostel_id", hostel_id)
+        query = query.eq("scope", scope)
+
+    res = query.order("vote_count", desc=True).limit(limit).execute()
+    return res.data or []
+
+
+def get_user_active_open_tickets(user_id: str, limit: int = 6) -> List[Dict[str, Any]]:
+    """Retrieve student's active open and in_progress tickets for semantic duplicate detection."""
+    if not user_id:
+        return []
+    try:
+        res = (
+            supabase.table("complaints")
+            .select("id, title, description, category, staff_role, scope, status, created_at")
+            .eq("user_id", user_id)
+            .in_("status", ["open", "in_progress"])
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception:
+        return []
+
+
 def get_open_complaints_for_similarity(limit: int = 30) -> List[Dict[str, Any]]:
     """Fetch open complaints sorted by vote count for similarity matching."""
     res = (
         supabase.table("complaints")
-        .select("id, title, vote_count, description, category, status")
+        .select("id, title, vote_count, description, category, staff_role, scope, mess_id, status")
         .eq("status", "open")
         .order("vote_count", desc=True)
         .limit(limit)

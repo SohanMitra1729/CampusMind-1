@@ -13,12 +13,14 @@ export function useAdminComplaints() {
   const [isLoadingComplaints, setIsLoadingComplaints] = useState(false);
   const [complaintStatusFilter, setComplaintStatusFilter] = useState('');
   const [complaintCategoryFilter, setComplaintCategoryFilter] = useState('');
+  const [complaintStaffRoleFilter, setComplaintStaffRoleFilter] = useState('');
+  const [complaintScopeFilter, setComplaintScopeFilter] = useState('');
   const [updatingComplaintId, setUpdatingComplaintId] = useState(null);
 
-  const fetchComplaints = useCallback(async (status = '', category = '') => {
+  const fetchComplaints = useCallback(async (status = '', category = '', staffRole = '', scope = '') => {
     setIsLoadingComplaints(true);
     try {
-      const data = await getAdminComplaintsApi({ status, category });
+      const data = await getAdminComplaintsApi({ status, category, staffRole, scope });
       setComplaints(data || []);
     } catch (e) {
       console.error('Failed to load complaints', e);
@@ -50,6 +52,10 @@ export function useAdminComplaints() {
     setComplaintStatusFilter,
     complaintCategoryFilter,
     setComplaintCategoryFilter,
+    complaintStaffRoleFilter,
+    setComplaintStaffRoleFilter,
+    complaintScopeFilter,
+    setComplaintScopeFilter,
     updatingComplaintId,
     fetchComplaints,
     updateComplaintStatus,

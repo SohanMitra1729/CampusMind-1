@@ -85,12 +85,20 @@ async def get_my_complaints(current_user=Depends(get_current_user)):
 async def list_complaints(
     status: Optional[str] = None,
     category: Optional[str] = None,
+    staff_role: Optional[str] = None,
+    scope: Optional[str] = None,
     limit: int = 50,
     _admin=Depends(require_admin),
 ):
-    """Admin endpoint: all complaints, filterable by status and category."""
+    """Admin endpoint: all complaints, filterable by status, category, staff_role, and scope."""
     try:
-        return complaint_service.get_all_complaints(status=status, category=category, limit=limit)
+        return complaint_service.get_all_complaints(
+            status=status,
+            category=category,
+            staff_role=staff_role,
+            scope=scope,
+            limit=limit,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

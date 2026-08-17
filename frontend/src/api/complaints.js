@@ -26,10 +26,12 @@ export async function getMyComplaintsApi() {
   });
 }
 
-export async function getAdminComplaintsApi({ status, category, limit = 50 } = {}) {
+export async function getAdminComplaintsApi({ status, category, staffRole, scope, limit = 50 } = {}) {
   const params = new URLSearchParams();
   if (status && status !== 'all') params.append('status', status);
   if (category && category !== 'all') params.append('category', category);
+  if (staffRole && staffRole !== 'all') params.append('staff_role', staffRole);
+  if (scope && scope !== 'all') params.append('scope', scope);
   params.append('limit', limit);
 
   const queryString = params.toString();
