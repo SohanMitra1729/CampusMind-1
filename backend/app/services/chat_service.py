@@ -114,7 +114,8 @@ async def handle_chat(
     # Classify first so the user gets a clean, focused complaint intake prompt
     # instead of a contradictory mix of "contact staff" + "file a complaint".
     try:
-        clf = classify_complaint(query)
+        active_tickets = complaint_repo.get_user_active_open_tickets(user_id) if user_id else []
+        clf = classify_complaint(query, active_tickets=active_tickets)
         if (
             clf.get("is_complaint")
             and float(clf.get("confidence", 0)) >= _COMPLAINT_CONFIDENCE_THRESHOLD

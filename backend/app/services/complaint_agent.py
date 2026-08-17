@@ -1,10 +1,11 @@
 """
 app/services/complaint_agent.py — Agentic Complaint Management Pipeline
 ────────────────────────────────────────────────────────────────────────
-3-stage funnel:
-  Stage 1: CLASSIFY  — LLM determines if input is a complaint (~60 tokens, Groq)
-  Stage 2: ENRICH    — If hostel-related, fetch room/hostel from RAG chunks (DB only)
-  Stage 3: SIMILAR   — keyword-overlap search for similar open complaints (DB only)
+4-stage funnel:
+  Stage 1: CLASSIFY  — LLM determines complaint, category, staff_role, scope & checks for semantic duplicate of active tickets
+  Stage 2: ENRICH    — If hostel/mess related, resolve hostel details & mess_id from DB
+  Stage 3: SPAM/SIMILAR — Check for student self-duplicates & scope-aware similar tickets
+  Stage 4: INGEST    — Save with permanent scope/role & dispatch to ground staff
 """
 
 import re
@@ -45,13 +46,27 @@ STATUS_LABELS = {
 
 # ── Stage 1: Classify ─────────────────────────────────────────────────────────
 
-def classify_complaint(text: str) -> dict:
-    """Determine if the input text is a complaint or grievance."""
+def classify_complaint(text: str, active_tickets: Optional[List[Dict[str, Any]]] = None) -> dict:
+    """Determine if the input text is a complaint, extract category, role, boundary scope, and check for semantic duplicate."""
     excerpt = text[:400].strip()
+
+    active_tickets_context = ""
+    if active_tickets:
+        active_tickets_context = "\nStudent's currently ACTIVE open tickets:\n"
+        for t in active_tickets:
+            t_id = t.get("id", "")
+            active_tickets_context += f"- Ticket ID: \"{t_id}\" | Title: \"{t.get('title')}\" | Desc: \"{(t.get('description') or '')[:80]}\" | Status: {t.get('status')}\n"
+        active_tickets_context += (
+            "\nSEMANTIC DUPLICATE CHECK RULE:\n"
+            "If the student message refers to the EXACT SAME root problem/incident as one of the active tickets above "
+            "(even with completely different wording/synonyms, e.g. 'no hot water' vs 'geyser broken', 'dark room' vs 'light fused', 'bad food' vs 'stale dinner', 'fan not spinning' vs 'fan dead'), "
+            "set 'duplicate_of_id' to that exact Ticket ID. Otherwise set 'duplicate_of_id' to null.\n"
+        )
+
     prompt = f"""You are a complaint classifier for a university student portal.
 
 Student message:
-\"\"\"{excerpt}\"\"\"
+\"\"\"{excerpt}\"\"\"{active_tickets_context}
 
 Respond with a single JSON object only (no markdown):
 {{
@@ -59,36 +74,41 @@ Respond with a single JSON object only (no markdown):
   "category": "<hostel|academic|admin|facility|mess|transport|general|not_complaint>",
   "title": "<short complaint title max 60 chars, empty string if not a complaint>",
   "confidence": <0.0-1.0>,
-  "needs_room": <true if the complaint is clearly about a specific room (e.g. "my room", "room 204", "my bathroom"), false if it affects the whole hostel/building/mess/campus>,
-  "staff_role": "<which staff role should handle this: electrical | cleaning | mess_manager | watchmen | none>"
+  "needs_room": <true if the complaint is about a specific room fixture or personal item in a room, false if it is mess/campus/corridor/common>,
+  "staff_role": "<which staff role should handle this: electrical | cleaning | maintenance | mess_manager | watchmen | none>",
+  "scope": "<MESS | ROOM_SHARED | ROOM_INDIVIDUAL | COMMON_AREA>",
+  "duplicate_of_id": <exact Ticket ID string if duplicate of an active ticket, otherwise null>
 }}
 
-staff_role selection rules (pick the BEST match based on the actual problem, not just the category):
-- electrical  : lights, fans, power, switches, sockets, electrical fittings, wiring, inverter, generator
-- cleaning    : garbage, cleanliness, dirty bathroom, waste, sweeping, mopping, sanitation, cockroaches, pest
-- mess_manager: food quality, meal timing, mess hygiene, canteen, water in mess, dining
-- watchmen    : security, entry/exit, gate, theft, outsiders, curfew, general hostel safety
+staff_role rules:
+- electrical  : lights, fans, power, switches, sockets, electrical fittings, wiring, inverter, generator, short circuit
+- cleaning    : garbage, cleanliness, dirty bathroom, waste, sweeping, mopping, sanitation, cockroaches, pest control, bad smell
+- maintenance : broken/damaged furniture (bed, mattress, study table, chair, wardrobe, shelf), plumbing (tap leaking, pipe burst, drain blocked, flush broken, shower not working), broken door, broken window, broken lock, ceiling crack, wall damage, civil/structural issues
+- mess_manager: food quality, meal timing, mess hygiene, canteen, water in mess, dining, raw/stale food
+- watchmen    : security, entry/exit, gate, theft, outsiders, curfew, general hostel safety, stranger
 - none        : academic, admin, transport issues (not handled by hostel staff)
 
-needs_room rules:
-- true  : "my room", "my fan", "my bathroom", "room 204" — affects one specific room
-- false : "entire hostel", "block", "common area", "mess", "campus", "WiFi" — affects multiple people
+scope rules:
+- MESS            : any food, dining hall, mess timing, mess water, mess cleanliness issue
+- ROOM_SHARED     : shared fixtures inside a room (ceiling fan, room tube light, room door, window, main room switchboard)
+- ROOM_INDIVIDUAL : individual assigned room items (bed, mattress, study table, chair, wardrobe locker)
+- COMMON_AREA     : corridor, floor washroom, geyser in common bathroom, water cooler on floor, stairs, lift, campus lawn
 
 Examples:
-- "My room light is not working" → hostel, electrical, needs_room=true
-- "Light in the corridor is broken" → hostel, electrical, needs_room=false
-- "Mess food has insects" → mess, mess_manager, needs_room=false
-- "Garbage not collected in my room" → hostel, cleaning, needs_room=true
-- "Common bathroom is very dirty" → hostel, cleaning, needs_room=false
-- "Stranger entered the hostel" → hostel, watchmen, needs_room=false
-- "My internal marks are wrong" → academic, none, needs_room=false"""
+- "My room light is not working" → hostel, electrical, needs_room=true, scope=ROOM_SHARED
+- "My bed is broken" → hostel, maintenance, needs_room=true, scope=ROOM_INDIVIDUAL
+- "Study table in room 204 is damaged" → hostel, maintenance, needs_room=true, scope=ROOM_INDIVIDUAL
+- "Mess food is cold today" → mess, mess_manager, needs_room=false, scope=MESS
+- "2nd floor bathroom geyser not working" → hostel, maintenance, needs_room=false, scope=COMMON_AREA
+- "Corridor light is broken" → hostel, electrical, needs_room=false, scope=COMMON_AREA
+- "My internal marks are wrong" → academic, none, needs_room=false, scope=COMMON_AREA"""
 
     try:
         resp = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model=settings.GROQ_MODEL,
             temperature=0.0,
-            max_tokens=150,
+            max_tokens=220,
         )
         raw = resp.choices[0].message.content.strip()
         raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
@@ -97,9 +117,13 @@ Examples:
         result["staff_role"]  = result.get("staff_role", "watchmen") or "watchmen"
         if result["staff_role"] == "none":
             result["staff_role"] = None
+        result["scope"] = result.get("scope", "COMMON_AREA")
+        if result["scope"] not in {"MESS", "ROOM_SHARED", "ROOM_INDIVIDUAL", "COMMON_AREA"}:
+            result["scope"] = "COMMON_AREA"
+            
         print(f"[ComplaintAgent] classify: is_complaint={result.get('is_complaint')} "
-              f"category={result.get('category')} staff_role={result.get('staff_role')} "
-              f"needs_room={result.get('needs_room')} confidence={result.get('confidence')}")
+              f"category={result.get('category')} role={result.get('staff_role')} "
+              f"scope={result.get('scope')} duplicate_of={result.get('duplicate_of_id')} title='{result.get('title')}'")
         return result
     except Exception as e:
         print(f"[ComplaintAgent] classify error: {e}")
@@ -110,6 +134,8 @@ Examples:
             "confidence":   0.0,
             "needs_room":   False,
             "staff_role":   None,
+            "scope":        "COMMON_AREA",
+            "duplicate_of_id": None,
         }
 
 
@@ -139,9 +165,20 @@ def enrich_hostel_details(scholar_id: str) -> dict:
 
 # ── Stage 3: Similar complaint search ────────────────────────────────────────
 
-def find_similar_complaints(complaint_text: str, complaint_title: str, category: str) -> List[dict]:
+def find_similar_complaints(complaint_text: str, complaint_title: str, scope: str, mess_id: Optional[str] = None, hostel_id: Optional[str] = None, room_number: Optional[str] = None) -> List[dict]:
+    """Find similar open complaints scoped to the exact boundary."""
     try:
-        complaints = complaint_repo.get_open_complaints_for_similarity(limit=30)
+        # Individual room items are unique per student — no merging
+        if scope == "ROOM_INDIVIDUAL":
+            return []
+
+        complaints = complaint_repo.get_open_complaints_by_scope(
+            scope=scope,
+            mess_id=mess_id,
+            hostel_id=hostel_id,
+            room_number=room_number,
+            limit=20,
+        )
 
         input_words = set(re.findall(r"\b\w{3,}\b", (complaint_text + " " + complaint_title).lower()))
         stop_words = {"the", "is", "my", "our", "was", "are", "has", "have", "not",
@@ -158,7 +195,7 @@ def find_similar_complaints(complaint_text: str, complaint_title: str, category:
                 continue
             overlap = len(input_words & cand_words)
             score   = overlap / max(len(input_words | cand_words), 1)
-            if score >= 0.15 or overlap >= 3:
+            if score >= 0.20 or overlap >= 3:
                 similar.append({
                     "id":          c["id"],
                     "title":       c["title"],
@@ -187,19 +224,54 @@ def process_complaint(
     scholar_id = user_info.get("scholar_id") or ""
     name       = user_info.get("name") or "Student"
 
-    classification = classify_complaint(text)
+    # Fetch active open tickets for semantic duplicate detection
+    active_tickets = []
+    if user_id:
+        active_tickets = complaint_repo.get_user_active_open_tickets(user_id)
+
+    classification = classify_complaint(text, active_tickets=active_tickets)
     if not classification.get("is_complaint"):
         return {
             "error":   "not_a_complaint",
             "message": "This message does not appear to be a complaint.",
         }
 
+    # ── LLM Semantic Duplicate Detection Check
+    dup_id = classification.get("duplicate_of_id")
+    if dup_id and active_tickets:
+        matched = next((t for t in active_tickets if t.get("id") == dup_id or str(t.get("id", "")).startswith(str(dup_id))), None)
+        if matched:
+            status_text = matched.get('status', 'in_progress').replace('_', ' ').title()
+            return {
+                "error": "already_open",
+                "message": f"You already have an active ticket #{str(matched.get('id', ''))[:8]} for '{matched.get('title')}' (Status: {status_text}). Ground staff is already working on this.",
+                "existing_complaint": matched,
+            }
+
     category   = classification.get("category", "general")
     title      = classification.get("title") or text[:60].strip()
     staff_role = classification.get("staff_role")
+    scope      = classification.get("scope", "COMMON_AREA")
 
-    similar = find_similar_complaints(text, title, category)
-    print(f"[ComplaintAgent] Found {len(similar)} similar complaint(s)")
+    # ── Resolve Mess ID from Hostel if category is mess / scope is MESS
+    mess_id: Optional[str] = None
+    hostel_name = "Unknown Hostel"
+    if hostel_id:
+        hostel = complaint_repo.get_hostel_by_id(hostel_id)
+        if hostel:
+            hostel_name = hostel.get("name", hostel_name)
+            mess_id = hostel.get("mess_id")
+
+    # Scope-aware similar complaint search
+    similar = find_similar_complaints(
+        complaint_text=text,
+        complaint_title=title,
+        scope=scope,
+        mess_id=mess_id,
+        hostel_id=hostel_id,
+        room_number=room_number,
+    )
+    print(f"[ComplaintAgent] Found {len(similar)} similar complaint(s) for scope={scope}")
 
     hostel_details: dict = {}
     if category == "hostel":
@@ -213,6 +285,9 @@ def process_complaint(
         "description":    text,
         "category":       category,
         "status":         "open",
+        "staff_role":     staff_role,
+        "scope":          scope,
+        "mess_id":        mess_id,
         "hostel_details": hostel_details,
         "vote_count":     1,
         "hostel_id":      hostel_id or None,
@@ -225,16 +300,11 @@ def process_complaint(
     if complaint_id and user_id:
         complaint_repo.record_vote(complaint_id, user_id, scholar_id)
 
-    print(f"[ComplaintAgent] Complaint saved: '{title}' [{category}] id={complaint_id}")
+    print(f"[ComplaintAgent] Complaint saved: '{title}' [{category}/{scope}] id={complaint_id}")
 
     if complaint_id:
         try:
             from app.services.staff_bot import send_complaint_to_staff
-            hostel_name = "Unknown Hostel"
-            if hostel_id:
-                hostel = complaint_repo.get_hostel_by_id(hostel_id)
-                if hostel:
-                    hostel_name = hostel.get("name", hostel_name)
             send_complaint_to_staff(
                 complaint_id=complaint_id,
                 title=title,
@@ -245,6 +315,8 @@ def process_complaint(
                 hostel_name=hostel_name,
                 room_number=room_number,
                 student_name=name,
+                scope=scope,
+                mess_id=mess_id,
             )
         except Exception as fwd_err:
             print(f"[ComplaintAgent] Staff forwarding error (non-fatal): {fwd_err}")
@@ -255,6 +327,7 @@ def process_complaint(
         "hostel_details": hostel_details,
         "category":       category,
         "title":          title,
+        "scope":          scope,
     }
 
 

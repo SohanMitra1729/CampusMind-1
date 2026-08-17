@@ -6,7 +6,14 @@
 CREATE TABLE IF NOT EXISTS public.hostels (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     name TEXT NOT NULL,
-    code TEXT UNIQUE NOT NULL
+    code TEXT UNIQUE NOT NULL,
+    gender TEXT CHECK (gender IN ('boys', 'girls', 'co-ed')),
+    target_years TEXT,
+    sharing_types INT[] DEFAULT '{1}',
+    sharing_description TEXT,
+    mess_id TEXT,
+    mess_name TEXT,
+    aliases TEXT[] DEFAULT '{}'
 );
 
 ALTER TABLE public.hostels ENABLE ROW LEVEL SECURITY;
@@ -36,8 +43,9 @@ CREATE TABLE IF NOT EXISTS public.staff_members (
     name TEXT,
     phone_number TEXT UNIQUE,
     telegram_chat_id TEXT UNIQUE,
-    role TEXT NOT NULL CHECK (role IN ('electrical', 'cleaning', 'mess_manager', 'watchmen')),
+    role TEXT NOT NULL CHECK (role IN ('electrical', 'cleaning', 'maintenance', 'mess_manager', 'watchmen')),
     hostel_id UUID REFERENCES public.hostels(id) ON DELETE SET NULL,
+    mess_id TEXT,
     active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
@@ -74,6 +82,9 @@ CREATE TABLE IF NOT EXISTS public.complaints (
     hostel_details JSONB DEFAULT '{}',
     hostel_id UUID REFERENCES public.hostels(id) ON DELETE SET NULL,
     room_number TEXT,
+    staff_role TEXT CHECK (staff_role IN ('electrical', 'cleaning', 'maintenance', 'mess_manager', 'watchmen')),
+    scope TEXT NOT NULL CHECK (scope IN ('MESS', 'ROOM_SHARED', 'ROOM_INDIVIDUAL', 'COMMON_AREA')) DEFAULT 'COMMON_AREA',
+    mess_id TEXT,
     vote_count INT DEFAULT 1,
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL
 );
@@ -92,6 +103,7 @@ CREATE POLICY "Students can view their own complaints" ON public.complaints
 CREATE INDEX IF NOT EXISTS idx_complaints_hostel_room ON public.complaints (hostel_id, room_number);
 CREATE INDEX IF NOT EXISTS idx_complaints_user_id ON public.complaints (user_id);
 CREATE INDEX IF NOT EXISTS idx_complaints_status ON public.complaints (status);
+CREATE INDEX IF NOT EXISTS idx_complaints_staff_role ON public.complaints (staff_role);
 
 -- 5. Complaint Upvotes Table (Deduplication per student)
 CREATE TABLE IF NOT EXISTS public.complaint_votes (
