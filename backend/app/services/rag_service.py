@@ -16,6 +16,7 @@ from groq import Groq, AsyncGroq
 
 from app.core.config import settings
 from app.core.logger import logger
+from app.core.key_pool import gemini_pool, groq_pool
 from app.db.supabase import supabase
 import app.repositories.document_repository as doc_repo
 import app.repositories.complaint_repository as complaint_repo
@@ -23,40 +24,15 @@ import app.repositories.complaint_repository as complaint_repo
 supabase_url = settings.SUPABASE_URL
 supabase_key = settings.SUPABASE_SERVICE_KEY
 
-groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
-async_groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY or "placeholder_key")
-
 
 def get_gemini_embedding(text: str) -> List[float]:
-    """Call Google Gemini Embeddings API directly to fetch 1536-dim vector via httpx (sync for scripts)."""
-    api_key = settings.GOOGLE_API_KEY
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
-    payload = {
-        "model": "models/gemini-embedding-2",
-        "content": {"parts": [{"text": text}]},
-        "outputDimensionality": 1536
-    }
-    with httpx.Client(timeout=20.0) as client:
-        response = client.post(url, json=payload, headers={"Content-Type": "application/json"})
-        response.raise_for_status()
-        data = response.json()
-        return data["embedding"]["values"]
+    """Fetch 1536-dim vector using automatic Gemini multi-key failover pool."""
+    return gemini_pool.get_embedding(text)
 
 
 async def get_gemini_embedding_async(text: str) -> List[float]:
-    """Call Google Gemini Embeddings API directly to fetch 1536-dim vector via httpx.AsyncClient (non-blocking)."""
-    api_key = settings.GOOGLE_API_KEY
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent?key={api_key}"
-    payload = {
-        "model": "models/gemini-embedding-2",
-        "content": {"parts": [{"text": text}]},
-        "outputDimensionality": 1536
-    }
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        response = await client.post(url, json=payload, headers={"Content-Type": "application/json"})
-        response.raise_for_status()
-        data = response.json()
-        return data["embedding"]["values"]
+    """Fetch 1536-dim vector asynchronously using automatic Gemini multi-key failover pool."""
+    return await gemini_pool.get_embedding_async(text)
 
 
 def hybrid_search(
@@ -280,7 +256,7 @@ async def get_answer(
                 
         messages.append({"role": "user", "content": query})
 
-        chat_completion = groq_client.chat.completions.create(
+        chat_completion = groq_pool.chat_completion(
             messages=messages,
             model=settings.GROQ_MODEL,
             temperature=0.2,
@@ -362,14 +338,12 @@ async def get_answer_stream(
     sources = [item.get("metadata", {}) for item in context_items]
 
     try:
-        stream = await async_groq_client.chat.completions.create(
+        async for chunk in groq_pool.async_chat_completion_stream(
             messages=messages,
             model=settings.GROQ_MODEL,
             temperature=0.2,
             max_tokens=1024,
-            stream=True,
-        )
-        async for chunk in stream:
+        ):
             token = chunk.choices[0].delta.content or ""
             if token:
                 yield f"data: {_json.dumps({'token': token})}\n\n"

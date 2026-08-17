@@ -13,14 +13,12 @@ import os
 import json
 from typing import Optional, List, Dict, Any
 
-from groq import Groq
 from app.core.config import settings
+from app.core.key_pool import groq_pool
 import app.repositories.document_repository as doc_repo
 import app.repositories.complaint_repository as complaint_repo
 
 from app.core.logger import logger
-
-groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 COMPLAINT_CATEGORIES = {
     "hostel", "academic", "admin", "facility", "mess", "transport", "general",
@@ -104,7 +102,7 @@ Examples:
 - "My internal marks are wrong" → academic, none, needs_room=false, scope=COMMON_AREA"""
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = groq_pool.chat_completion(
             messages=[{"role": "user", "content": prompt}],
             model=settings.GROQ_MODEL,
             temperature=0.0,
