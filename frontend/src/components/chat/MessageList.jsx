@@ -2,6 +2,7 @@
  * src/components/chat/MessageList.jsx — Messages Feed, Quick Actions & RAG Sources
  */
 
+import ReactMarkdown from 'react-markdown';
 import { Sparkles, Loader2, Calendar, Home, BellRing, AlertCircle, CheckCircle2, Send } from 'lucide-react';
 
 export default function MessageList({
@@ -34,7 +35,26 @@ export default function MessageList({
               <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '4px', opacity: 0.8 }}>
                 {msg.role === 'user' ? 'You' : 'CampusMind AI'}
               </div>
-              <p style={{ margin: 0, whitespace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.content}</p>
+              {msg.role === 'bot' ? (
+                <div className="chat-bubble-markdown">
+                  {!msg.content && isLoading ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--cm-muted)', fontSize: '0.875rem' }}>
+                      <Loader2 className="animate-spin cm-icon-sm" /> Thinking...
+                    </div>
+                  ) : (
+                    <ReactMarkdown
+                      disallowedElements={['script', 'iframe', 'object']}
+                      unwrapDisallowed
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  )}
+                </div>
+              ) : (
+                <p style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {msg.content}
+                </p>
+              )}
 
               {msg.metadata?.sources && msg.metadata.sources.length > 0 && (
                 <div className="chat-sources">
@@ -54,15 +74,6 @@ export default function MessageList({
           </div>
         ))}
 
-        {isLoading && (
-          <div className="chat-bubble-row bot">
-            <div className="chat-bubble bot">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--cm-muted)', fontSize: '0.875rem' }}>
-                <Loader2 className="animate-spin cm-icon-sm" /> Thinking...
-              </div>
-            </div>
-          </div>
-        )}
 
         <div ref={messagesEndRef} />
       </div>

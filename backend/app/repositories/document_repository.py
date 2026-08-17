@@ -73,12 +73,13 @@ def execute_hybrid_search(
     match_count: int = 6,
     filter_metadata: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Execute the RPC call to the pgvector hybrid_search_documents stored procedure."""
+    """Execute the RPC call to the pgvector hybrid_search stored procedure."""
     rpc_params = {
         "query_text":      query_text,
         "query_embedding": query_embedding,
         "match_count":     match_count,
-        "filter_metadata": filter_metadata or {},
+        "filter":          filter_metadata or {},
     }
-    res = supabase.rpc("hybrid_search_documents", rpc_params).execute()
+    res = supabase.rpc("hybrid_search", rpc_params).execute()
     return res.data or []
+

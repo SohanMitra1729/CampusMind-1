@@ -274,6 +274,54 @@
   margin: 0;
 }
 
+/* ── Markdown rendering inside bot bubbles ── */
+.chat-bubble-markdown {
+  line-height: 1.65;
+  font-size: 0.9rem;
+}
+.chat-bubble-markdown p {
+  margin: 0 0 0.55rem 0;
+}
+.chat-bubble-markdown p:last-child {
+  margin: 0;
+}
+.chat-bubble-markdown strong {
+  font-weight: 700;
+  color: #e2e8f0;
+}
+.chat-bubble-markdown em {
+  font-style: italic;
+  opacity: 0.85;
+}
+.chat-bubble-markdown code {
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: 'Fira Mono', monospace;
+  font-size: 0.82em;
+  color: #a5f3fc;
+}
+.chat-bubble-markdown ul,
+.chat-bubble-markdown ol {
+  margin: 0.4rem 0 0.55rem 1.2rem;
+  padding: 0;
+}
+.chat-bubble-markdown li {
+  margin-bottom: 0.25rem;
+}
+.chat-bubble-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  margin: 0.6rem 0;
+}
+.chat-bubble-markdown h1,
+.chat-bubble-markdown h2,
+.chat-bubble-markdown h3 {
+  margin: 0.5rem 0 0.3rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
 /* ── Source Citations ── */
 .chat-sources {
   margin-top: var(--space-4);

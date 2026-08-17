@@ -1,5 +1,9 @@
 /**
- * src/api/complaints.js — Complaint Management & Hostel Directory API Methods
+ * src/api/complaints.js — Complaint Management API Methods
+ *
+ * Note: Complaint filing (classify + submit) is now handled server-side through
+ * the chat endpoint via the conversational complaint dialogue agent.
+ * This file only contains: hostel list, voting, and viewing complaints.
  */
 
 import { apiClient } from './client';
@@ -7,24 +11,6 @@ import { apiClient } from './client';
 export async function getHostelsApi() {
   return apiClient('/api/hostels', {
     method: 'GET',
-  });
-}
-
-export async function classifyComplaintApi(text) {
-  return apiClient('/api/complaint/classify', {
-    method: 'POST',
-    body: JSON.stringify({ text }),
-  });
-}
-
-export async function submitComplaintApi(text, hostelId = null, roomNumber = null) {
-  return apiClient('/api/complaint', {
-    method: 'POST',
-    body: JSON.stringify({
-      text,
-      hostel_id: hostelId,
-      room_number: roomNumber,
-    }),
   });
 }
 
