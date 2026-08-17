@@ -83,19 +83,19 @@ export default function MessageList({
       <div className="chat-input-container">
         {messages.length === 0 && !isLoading && (
           <div className="quick-actions-grid">
-            <button className="qa-card" type="button" onClick={() => onQuickAction('Show me the academic calendar', 'academic')}>
+            <button className="qa-card" type="button" onClick={() => onQuickAction('Show me the academic calendar and upcoming events', null)}>
               <Calendar className="qa-icon" />
               <div className="qa-text">Academic Calendar</div>
             </button>
-            <button className="qa-card" type="button" onClick={() => onQuickAction('I want to report an issue with my hostel', 'hostel')}>
+            <button className="qa-card" type="button" onClick={() => onQuickAction('Tell me about the campus hostels, room allotment, and mess facilities', null)}>
               <Home className="qa-icon" />
               <div className="qa-text">Hostel Information</div>
             </button>
-            <button className="qa-card" type="button" onClick={() => onQuickAction('Are there any new notices?', 'notices')}>
+            <button className="qa-card" type="button" onClick={() => onQuickAction('What are the latest campus notices and announcements?', null)}>
               <BellRing className="qa-icon" />
               <div className="qa-text">Notices &<br />Announcements</div>
             </button>
-            <button className="qa-card" type="button" onClick={() => onQuickAction('I want to report an issue', 'hostel')}>
+            <button className="qa-card" type="button" onClick={() => onQuickAction('I want to report an issue', null)}>
               <AlertCircle className="qa-icon" />
               <div className="qa-text">Report an<br />Issue</div>
             </button>

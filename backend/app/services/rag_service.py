@@ -20,6 +20,7 @@ from app.core.key_pool import gemini_pool, groq_pool
 from app.db.supabase import supabase
 import app.repositories.document_repository as doc_repo
 import app.repositories.complaint_repository as complaint_repo
+import app.repositories.notice_repository as notice_repo
 
 supabase_url = settings.SUPABASE_URL
 supabase_key = settings.SUPABASE_SERVICE_KEY
@@ -119,13 +120,32 @@ def fetch_campus_hostels_context() -> str:
         ]
         for h in hostels:
             gender = (h.get("gender") or "Campus").capitalize()
-            batch  = h.get("target_years") or "All Batches"
-            desc   = h.get("sharing_description") or ""
-            mess   = h.get("mess_name") or "Hostel Mess"
             lines.append(f"• {h.get('name')} [{gender} | Batch: {batch} | Rooms: {desc} | Assigned Mess: {mess}]")
         return "\n" + "\n".join(lines) + "\n"
     except Exception as e:
-        print(f"[RAG] fetch_campus_hostels_context error: {e}")
+        logger.warning(f"[RAG] fetch_campus_hostels_context error: {e}")
+        return ""
+
+
+def fetch_recent_notices_context() -> str:
+    """Fetch the latest institutional notices broadcasted by administration."""
+    try:
+        notices = notice_repo.get_all_notices(limit=6)
+        if not notices:
+            return ""
+        lines = [
+            "[LATEST OFFICIAL CAMPUS NOTICES & BROADCASTS — Ground-Truth Admin Announcements]:",
+            "Use this authoritative list whenever students ask about recent notices, announcements, circulars, or updates:",
+        ]
+        for n in notices:
+            title = n.get("title") or "Notice"
+            content = n.get("content") or ""
+            ntype = (n.get("notice_type") or "general").replace("_", " ").title()
+            date = str(n.get("created_at", ""))[:10]
+            lines.append(f"• [{ntype}] {title} (Date: {date}): {content[:350]}")
+        return "\n" + "\n".join(lines) + "\n"
+    except Exception as e:
+        logger.warning(f"[RAG] fetch_recent_notices_context error: {e}")
         return ""
 
 
@@ -147,10 +167,12 @@ def _build_system_instruction(
     context_text: str,
     user_context: str,
     hostels_context: str,
+    notices_context: str = "",
 ) -> str:
     return f"""You are CampusMind, a dedicated AI assistant exclusively for campus and institutional matters at this university.
 {personal_context}
 {hostels_context}
+{notices_context}
 You have access to the following institutional document excerpts:
 
 {context_text}
@@ -218,6 +240,7 @@ async def get_answer(
 
     context_items = await retrieve_context(query, metadata_filter)
     hostels_context = fetch_campus_hostels_context()
+    notices_context = fetch_recent_notices_context()
     
     if context_items:
         context_parts = []
@@ -244,6 +267,7 @@ async def get_answer(
         context_text=context_text,
         user_context=user_context,
         hostels_context=hostels_context,
+        notices_context=notices_context,
     )
     
     try:
@@ -300,6 +324,7 @@ async def get_answer_stream(
 
     context_items = await retrieve_context(query, metadata_filter)
     hostels_context = fetch_campus_hostels_context()
+    notices_context = fetch_recent_notices_context()
 
     if context_items:
         context_parts = []
@@ -326,6 +351,7 @@ async def get_answer_stream(
         context_text=context_text,
         user_context=user_context,
         hostels_context=hostels_context,
+        notices_context=notices_context,
     )
 
     messages = [{"role": "system", "content": system_instruction}]
