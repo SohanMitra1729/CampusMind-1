@@ -77,7 +77,7 @@ Rules:
     try:
         resp = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             temperature=0.0,
             max_tokens=120,
         )
@@ -120,7 +120,7 @@ Keep it friendly, clear, and actionable. No markdown."""
     try:
         resp = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             temperature=0.3,
             max_tokens=100,
         )
