@@ -16,6 +16,9 @@ function getInitialUser() {
       const session = JSON.parse(storedSession);
       const now = Math.floor(Date.now() / 1000);
       if (session.expires_at && session.expires_at > now) {
+        if (session.access_token && !sessionStorage.getItem('sb-access-token')) {
+          sessionStorage.setItem('sb-access-token', session.access_token);
+        }
         return JSON.parse(storedUser);
       }
     } catch {
