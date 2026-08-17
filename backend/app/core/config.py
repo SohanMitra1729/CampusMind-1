@@ -41,20 +41,24 @@ class Settings(BaseSettings):
     @property
     def groq_keys(self) -> list[str]:
         keys = []
-        if self.GROQ_API_KEYS:
-            keys.extend([k.strip() for k in self.GROQ_API_KEYS.split(",") if k.strip()])
-        if self.GROQ_API_KEY and self.GROQ_API_KEY.strip() not in keys:
-            keys.append(self.GROQ_API_KEY.strip())
-        return keys or [self.GROQ_API_KEY or ""]
+        for raw in [self.GROQ_API_KEYS, self.GROQ_API_KEY]:
+            if raw:
+                for k in str(raw).split(","):
+                    cleaned = k.strip().strip("'\"")
+                    if cleaned and cleaned not in keys:
+                        keys.append(cleaned)
+        return keys or [""]
 
     @property
     def google_keys(self) -> list[str]:
         keys = []
-        if self.GOOGLE_API_KEYS:
-            keys.extend([k.strip() for k in self.GOOGLE_API_KEYS.split(",") if k.strip()])
-        if self.GOOGLE_API_KEY and self.GOOGLE_API_KEY.strip() not in keys:
-            keys.append(self.GOOGLE_API_KEY.strip())
-        return keys or [self.GOOGLE_API_KEY or ""]
+        for raw in [self.GOOGLE_API_KEYS, self.GOOGLE_API_KEY]:
+            if raw:
+                for k in str(raw).split(","):
+                    cleaned = k.strip().strip("'\"")
+                    if cleaned and cleaned not in keys:
+                        keys.append(cleaned)
+        return keys or [""]
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
