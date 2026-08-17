@@ -257,9 +257,8 @@ Rules:
 - Keep every field concise — this is stored as searchable metadata"""
 
     try:
-        from groq import Groq
-        groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
-        resp = groq_client.chat.completions.create(
+        from app.core.key_pool import groq_pool
+        resp = groq_pool.chat_completion(
             messages=[{"role": "user", "content": prompt}],
             model=settings.GROQ_MODEL,
             temperature=0.0,

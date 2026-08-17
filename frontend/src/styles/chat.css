@@ -322,6 +322,48 @@
   color: #e2e8f0;
 }
 
+/* ── Markdown Tables ── */
+.chat-bubble-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(15, 23, 42, 0.6);
+}
+.chat-bubble-markdown th {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+  font-weight: 600;
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.chat-bubble-markdown th:last-child {
+  border-right: none;
+}
+.chat-bubble-markdown td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+.chat-bubble-markdown td:last-child {
+  border-right: none;
+}
+.chat-bubble-markdown tr:last-child td {
+  border-bottom: none;
+}
+.chat-bubble-markdown tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.02);
+}
+.chat-bubble-markdown tr:hover td {
+  background: rgba(59, 130, 246, 0.08);
+}
+
 /* ── Source Citations ── */
 .chat-sources {
   margin-top: var(--space-4);
