@@ -240,7 +240,7 @@ Rules for campus-related responses:
 
         chat_completion = groq_client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             temperature=0.2,
             max_tokens=1024
         )
@@ -357,7 +357,7 @@ Rules for campus-related responses:
     try:
         stream = await async_groq_client.chat.completions.create(
             messages=messages,
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             temperature=0.2,
             max_tokens=1024,
             stream=True,

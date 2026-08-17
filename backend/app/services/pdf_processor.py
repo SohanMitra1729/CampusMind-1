@@ -261,7 +261,7 @@ Rules:
         groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
         resp = groq_client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
+            model=settings.GROQ_MODEL,
             temperature=0.0,
             max_tokens=150,
         )

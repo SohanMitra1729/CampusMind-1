@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_KEY: str
     GROQ_API_KEY: str
+    GROQ_MODEL: str
     GOOGLE_API_KEY: str
 
     # ── Admin Auth ───────────────────────────────────────────────────────────
