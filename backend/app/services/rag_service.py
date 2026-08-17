@@ -2,8 +2,9 @@
 app/services/rag_service.py — Hybrid Vector RAG Retrieval Engine
 ─────────────────────────────────────────────────────────────────
 Encapsulates RAG pipeline:
-  - Gemini embeddings (3072-dim)
+  - Gemini embeddings (1536-dim)
   - Hybrid pgvector + FTS search with threshold filtering & deduplication
+  - Ground-truth campus hostels & facilities directory from Supabase
   - Pinned personal academic record lookup by scholar_id
   - Scope-restricted LLM answer generation via Groq
 """
@@ -17,13 +18,13 @@ from app.core.config import settings
 from app.core.logger import logger
 from app.db.supabase import supabase
 import app.repositories.document_repository as doc_repo
+import app.repositories.complaint_repository as complaint_repo
 
 supabase_url = settings.SUPABASE_URL
 supabase_key = settings.SUPABASE_SERVICE_KEY
 
 groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 async_groq_client = AsyncGroq(api_key=settings.GROQ_API_KEY or "placeholder_key")
-
 
 
 def get_gemini_embedding(text: str) -> List[float]:
@@ -87,7 +88,7 @@ async def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]]
         candidates = hybrid_search(
             query_text=query,
             query_embedding=query_embedding,
-            match_count=12,
+            match_count=8,
             filter_metadata=metadata_filter
         )
 
@@ -106,10 +107,9 @@ async def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]]
                 seen_fingerprints.append(fingerprint)
                 unique.append(chunk)
 
-        top_chunks = unique[:6]
+        top_chunks = unique[:4]
         logger.info(f"[RAG] Retrieved {len(candidates)} candidates -> {len(scored)} above threshold -> {len(unique)} unique -> {len(top_chunks)} sent to LLM")
         return top_chunks
-
 
     except Exception as e:
         print(f"[RAG] Retrieval error: {e}")
@@ -131,6 +131,28 @@ def fetch_personal_record(scholar_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def fetch_campus_hostels_context() -> str:
+    """Fetch the authoritative campus hostels and mess directory from public.hostels DB."""
+    try:
+        hostels = complaint_repo.get_all_hostels()
+        if not hostels:
+            return ""
+        lines = [
+            "[OFFICIAL CAMPUS HOSTELS & MESS DIRECTORY — Ground-Truth Institutional Data]:",
+            "Use this authoritative list whenever students ask about hostel availability, boys/girls hostels, room sharing, batch years, or messes:",
+        ]
+        for h in hostels:
+            gender = (h.get("gender") or "Campus").capitalize()
+            batch  = h.get("target_years") or "All Batches"
+            desc   = h.get("sharing_description") or ""
+            mess   = h.get("mess_name") or "Hostel Mess"
+            lines.append(f"• {h.get('name')} [{gender} | Batch: {batch} | Rooms: {desc} | Assigned Mess: {mess}]")
+        return "\n" + "\n".join(lines) + "\n"
+    except Exception as e:
+        print(f"[RAG] fetch_campus_hostels_context error: {e}")
+        return ""
+
+
 PERSONAL_RESULT_KEYWORDS = [
     "my result", "my marks", "my sgpa", "my cgpa", "my grade", "my score",
     "my semester", "my performance", "my subject", "how did i", "did i pass",
@@ -142,6 +164,61 @@ def is_personal_result_query(query: str) -> bool:
     """Detect if the query is asking about the logged-in student's own results."""
     q = query.lower()
     return any(kw in q for kw in PERSONAL_RESULT_KEYWORDS)
+
+
+def _build_system_instruction(
+    personal_context: str,
+    context_text: str,
+    user_context: str,
+    hostels_context: str,
+) -> str:
+    return f"""You are CampusMind, a dedicated AI assistant exclusively for campus and institutional matters at this university.
+{personal_context}
+{hostels_context}
+You have access to the following institutional document excerpts:
+
+{context_text}
+{user_context}
+
+════════════════════════════════════════════════
+CRITICAL SCOPE RESTRICTION — READ THIS FIRST
+════════════════════════════════════════════════
+You ONLY answer questions that are directly related to this institution and campus life. This includes:
+  • Academic results, marks, SGPA, CGPA, grades, transcripts
+  • Hostel directory, room sharing, hostel allotments, mess assignments
+  • Notices, circulars, announcements, and events
+  • Internships and placement opportunities listed by the college
+  • Fee details, scholarship information
+  • Campus facilities, departments, timetables
+  • Complaints and grievances related to campus services
+  • Student profile details (name, scholar ID, email)
+  • Any other information found in the institutional documents provided
+
+If a question is NOT related to this institution or campus life — including but not limited to:
+  general knowledge, science, history, geography, mathematics, coding help,
+  writing essays or poems, news, entertainment, sports, recipes, travel,
+  or any topic unrelated to campus affairs —
+you MUST respond with EXACTLY this message and nothing else:
+"I'm CampusMind, your campus assistant! I can only help with questions related to our institution — such as results, hostel details, notices, internships, complaints, and campus information. For general questions, please use a general-purpose AI assistant. 😊"
+
+Do NOT attempt to answer general questions even if you know the answer from your training data.
+════════════════════════════════════════════════
+
+Rules for campus-related responses:
+1. Answer directly and conversationally — never say phrases like "based on the context", "the document says", or "according to [any source/file name]". Speak as if you already know the information. Do NOT mention any file names, document names, or source names in your answer.
+2. If the user asks about hostel availability, boys hostels, girls hostels, room sharing, or messes — USE the [OFFICIAL CAMPUS HOSTELS & MESS DIRECTORY] above. It contains the complete, accurate ground-truth list.
+3. If the user asks about their own results, marks, SGPA, CGPA, or grades — use the [STUDENT'S OWN ACADEMIC RECORD] section above (if present). That record belongs specifically to this student.
+4. If the user asks about their own personal details (name, scholar ID, email), use the Active Logged-In Student info above.
+5. If the user asks HOW to submit, file, or give a complaint, or report an issue — ALWAYS inform them warmly that they can submit it RIGHT HERE with you in this chat! Invite them to describe their issue (e.g., "My room fan is broken", "Corridor light not working", "Mess food issue") and tell them you will file it for them immediately. NEVER tell them to use an external website, grievance cell, or offline form.
+6. If the question IS campus-related but the information is NOT present in the document excerpts or official directory, say: "I don't have that specific information right now. Please check with the administration or the relevant department."
+7. For casual greetings (hi, hello, hey), respond warmly and ask how you can help with campus-related queries.
+8. Tables & Markdown: Whenever formatting structured lists or tabular data (like marks, course grades, SGPA/CGPA, or hostel lists), format them as a valid Markdown Table with clear newlines between each row:
+| Course | Marks | Grade |
+| :--- | :--- | :--- |
+| CS 306 | 9 | AB |
+| CS 307 | 10 | AA |
+Ensure each row is on its own separate line with a standard newline (\\n). Never join rows on the same line.
+"""
 
 
 async def get_answer(
@@ -162,10 +239,9 @@ async def get_answer(
                 f"{record['content']}\n"
             )
             print(f"[RAG] Personal record found for scholar_id={scholar_id}")
-        else:
-            print(f"[RAG] No personal record found for scholar_id={scholar_id}")
 
     context_items = await retrieve_context(query, metadata_filter)
+    hostels_context = fetch_campus_hostels_context()
     
     if context_items:
         context_parts = []
@@ -187,46 +263,12 @@ async def get_answer(
             f"- Username: {user_info.get('username')}\n"
         )
     
-    system_instruction = f"""You are CampusMind, a dedicated AI assistant exclusively for campus and institutional matters.
-{personal_context}
-You have access to the following institutional document excerpts to answer student queries:
-
-{context_text}
-{user_context}
-
-════════════════════════════════════════════════
-CRITICAL SCOPE RESTRICTION — READ THIS FIRST
-════════════════════════════════════════════════
-You ONLY answer questions that are directly related to this institution and campus life. This includes:
-  • Academic results, marks, SGPA, CGPA, grades, transcripts
-  • Hostel allotments, room details, hostel rules
-  • Notices, circulars, announcements, and events
-  • Internships and placement opportunities listed by the college
-  • Fee details, scholarship information
-  • Campus facilities, departments, timetables
-  • Complaints and grievances related to campus services
-  • Student profile details (name, scholar ID, email)
-  • Any other information found in the institutional documents provided
-
-If a question is NOT related to this institution or campus life — including but not limited to:
-  general knowledge, science, history, geography, mathematics, coding help,
-  writing essays or poems, news, entertainment, sports, recipes, travel,
-  or any topic unrelated to campus affairs —
-you MUST respond with EXACTLY this message and nothing else:
-"I'm CampusMind, your campus assistant! I can only help with questions related to our institution — such as results, hostel details, notices, internships, complaints, and campus information. For general questions, please use a general-purpose AI assistant. 😊"
-
-Do NOT attempt to answer general questions even if you know the answer from your training data.
-Rules for campus-related responses:
-1. Answer directly and conversationally — never say phrases like "based on the context", "the document says", or "according to [any source/file name]". Speak as if you already know the information. Do NOT mention any file names, document names, or source names in your answer.
-2. If the user asks about their own results, marks, SGPA, CGPA, or grades — use the [STUDENT'S OWN ACADEMIC RECORD] section above (if present). That record belongs specifically to this student.
-3. If the user asks about their own personal details (name, scholar ID, email), use the Active Logged-In Student info above.
-4. If the user asks HOW to submit, file, or give a complaint, or report an issue — ALWAYS inform them warmly that they can submit it RIGHT HERE with you in this chat! Invite them to describe their issue (e.g., "My room fan is broken", "Corridor light not working", "Mess food issue") and tell them you will file it for them immediately. NEVER tell them to use an external website, grievance cell, or offline form.
-5. If the question IS campus-related but the information is NOT present in the document excerpts provided, say: "I don't have that specific information right now. Please check with the administration or the relevant department."
-6. For casual greetings (hi, hello, hey), respond warmly and ask how you can help with campus-related queries.
-7. Keep responses clear, concise, and helpful. Use bullet points or numbered lists when listing multiple items.
-"""
-
-
+    system_instruction = _build_system_instruction(
+        personal_context=personal_context,
+        context_text=context_text,
+        user_context=user_context,
+        hostels_context=hostels_context,
+    )
     
     try:
         messages = [{"role": "system", "content": system_instruction}]
@@ -281,6 +323,7 @@ async def get_answer_stream(
             )
 
     context_items = await retrieve_context(query, metadata_filter)
+    hostels_context = fetch_campus_hostels_context()
 
     if context_items:
         context_parts = []
@@ -302,48 +345,12 @@ async def get_answer_stream(
             f"- Username: {user_info.get('username')}\n"
         )
 
-    # Reuse exact same system prompt as get_answer
-    system_instruction = f"""You are CampusMind, a dedicated AI assistant exclusively for campus and institutional matters.
-{personal_context}
-You have access to the following institutional document excerpts to answer student queries:
-
-{context_text}
-{user_context}
-
-════════════════════════════════════════════════
-CRITICAL SCOPE RESTRICTION — READ THIS FIRST
-════════════════════════════════════════════════
-You ONLY answer questions that are directly related to this institution and campus life. This includes:
-  • Academic results, marks, SGPA, CGPA, grades, transcripts
-  • Hostel allotments, room details, hostel rules
-  • Notices, circulars, announcements, and events
-  • Internships and placement opportunities listed by the college
-  • Fee details, scholarship information
-  • Campus facilities, departments, timetables
-  • Complaints and grievances related to campus services
-  • Student profile details (name, scholar ID, email)
-  • Any other information found in the institutional documents provided
-
-If a question is NOT related to this institution or campus life — including but not limited to:
-  general knowledge, science, history, geography, mathematics, coding help,
-  writing essays or poems, news, entertainment, sports, recipes, travel,
-  or any topic unrelated to campus affairs —
-you MUST respond with EXACTLY this message and nothing else:
-"I'm CampusMind, your campus assistant! I can only help with questions related to our institution — such as results, hostel details, notices, internships, complaints, and campus information. For general questions, please use a general-purpose AI assistant. 😊"
-
-Do NOT attempt to answer general questions even if you know the answer from your training data.
-════════════════════════════════════════════════
-
-Rules for campus-related responses:
-1. Answer directly and conversationally — never say phrases like "based on the context", "the document says", or "according to [any source/file name]". Speak as if you already know the information. Do NOT mention any file names, document names, or source names in your answer.
-2. If the user asks about their own results, marks, SGPA, CGPA, or grades — use the [STUDENT'S OWN ACADEMIC RECORD] section above (if present). That record belongs specifically to this student.
-3. If the user asks about their own personal details (name, scholar ID, email), use the Active Logged-In Student info above.
-4. If the user asks HOW to submit, file, or give a complaint, or report an issue — ALWAYS inform them warmly that they can submit it RIGHT HERE with you in this chat! Invite them to describe their issue (e.g., "My room fan is broken", "Corridor light not working", "Mess food issue") and tell them you will file it for them immediately. NEVER tell them to use an external website, grievance cell, or offline form.
-5. If the question IS campus-related but the information is NOT present in the document excerpts provided, say: "I don't have that specific information right now. Please check with the administration or the relevant department."
-6. For casual greetings (hi, hello, hey), respond warmly and ask how you can help with campus-related queries.
-7. Keep responses clear, concise, and helpful. Use bullet points or numbered lists when listing multiple items.
-"""
-
+    system_instruction = _build_system_instruction(
+        personal_context=personal_context,
+        context_text=context_text,
+        user_context=user_context,
+        hostels_context=hostels_context,
+    )
 
     messages = [{"role": "system", "content": system_instruction}]
     if chat_history:
@@ -369,7 +376,6 @@ Rules for campus-related responses:
     except Exception as e:
         logger.error(f"[RAG] Streaming generation error: {e}")
         yield f"data: {_json.dumps({'token': 'Sorry, I encountered an error. Please try again.'})}\n\n"
-
 
     # Final event with metadata
     yield f"data: {_json.dumps({'done': True, 'sources': sources})}\n\n"

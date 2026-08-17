@@ -3,6 +3,7 @@
  */
 
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Sparkles, Loader2, Calendar, Home, BellRing, AlertCircle, CheckCircle2, Send } from 'lucide-react';
 
 export default function MessageList({
@@ -43,6 +44,7 @@ export default function MessageList({
                     </div>
                   ) : (
                     <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
                       disallowedElements={['script', 'iframe', 'object']}
                       unwrapDisallowed
                     >
