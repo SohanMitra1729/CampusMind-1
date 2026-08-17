@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { Shield, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../ui/Card';
@@ -28,9 +29,12 @@ export default function AdminLogin({ onAdminSuccess }) {
       sessionStorage.setItem('campusmind_admin', 'true');
       sessionStorage.setItem('campusmind_admin_token', token);
       sessionStorage.setItem('admin-token', token);
+      toast.success('Admin authentication successful.');
       onAdminSuccess(token);
     } catch (err) {
-      setError(err.message || 'Invalid admin credentials. Access denied.');
+      const errMsg = err.message || 'Invalid admin credentials. Access denied.';
+      setError(errMsg);
+      toast.error(errMsg);
     } finally {
       setIsLoading(false);
     }

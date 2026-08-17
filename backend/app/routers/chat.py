@@ -11,14 +11,17 @@ Handles:
 
 import json
 from typing import Any, Dict, AsyncGenerator
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.core.security import get_current_user
 from app.core.deps import fetch_profile
+from app.core.logger import logger
+from app.core.exceptions import ForbiddenException, InternalServerErrorException
 from app.schemas.chat import QueryRequest
 import app.repositories.user_repository as user_repo
 import app.repositories.chat_repository as chat_repo
+import app.repositories.complaint_repository as complaint_repo
 import app.services.chat_service as chat_service
 from app.services.complaint_agent import classify_complaint
 from app.services.complaint_dialogue_agent import (
@@ -77,8 +80,8 @@ async def _stream_response(
             yield f"data: {json.dumps({'token': intake_prompt})}\n\n"
             yield f"data: {json.dumps({'done': True, 'sources': [], 'chat_id': chat_id, 'title': title})}\n\n"
             return
-    except Exception:
-        pass  # Non-critical — fall through to RAG
+    except Exception as e:
+        logger.warning(f"[ChatStream] Complaint detection error (falling back to RAG): {e}")
 
     # ── RAG streaming ──────────────────────────────────────────────────────────
     chat_history = chat_repo.get_recent_history(chat_id, limit=6)
@@ -118,7 +121,6 @@ async def chat_stream(request: QueryRequest, current_user=Depends(get_current_us
     user_info = await fetch_profile(user_id)
 
     # Resolve or create the chat session BEFORE starting the stream
-    # (so we can include chat_id in the done event)
     try:
         if not request.chat_id:
             title    = request.query[:50] + "..." if len(request.query) > 50 else request.query
@@ -127,17 +129,18 @@ async def chat_stream(request: QueryRequest, current_user=Depends(get_current_us
         else:
             existing = chat_repo.get_chat_by_id_and_user(request.chat_id, user_id)
             if not existing:
-                raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+                raise ForbiddenException("Chat not found or access denied.")
             chat_id = request.chat_id
             title   = existing["title"]
 
         # Persist user message immediately (before tokens stream)
         chat_repo.add_message(chat_id, "user", request.query)
 
-    except HTTPException:
+    except ForbiddenException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[ChatStream] Error preparing stream session: {e}")
+        raise InternalServerErrorException("Failed to initiate chat stream.")
 
     return StreamingResponse(
         _stream_response(
@@ -169,9 +172,10 @@ async def chat(request: QueryRequest, current_user=Depends(get_current_user)):
             metadata_filter=request.metadata_filter,
         )
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise ForbiddenException(str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception(f"[Chat] Non-streaming chat error: {e}")
+        raise InternalServerErrorException("Failed to generate chat response.")
 
 
 @router.get("/api/chats")
@@ -184,7 +188,7 @@ async def get_chats(current_user=Depends(get_current_user)):
 async def delete_chat(chat_id: str, current_user=Depends(get_current_user)):
     success = chat_service.delete_chat(chat_id, str(current_user.id))
     if not success:
-        raise HTTPException(status_code=403, detail="Chat not found or access denied.")
+        raise ForbiddenException("Chat not found or access denied.")
     return {"message": "Chat deleted successfully."}
 
 
@@ -193,4 +197,4 @@ async def get_messages(chat_id: str, current_user=Depends(get_current_user)):
     try:
         return chat_service.get_chat_messages(chat_id, str(current_user.id))
     except PermissionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise ForbiddenException(str(e))

@@ -267,6 +267,11 @@
   box-shadow: var(--shadow-md);
 }
 
+.chat-bubble.bot.is-error {
+  border-color: rgba(239, 68, 68, 0.35);
+  background-color: rgba(239, 68, 68, 0.08);
+}
+
 .chat-bubble p {
   margin: 0 0 var(--space-4) 0;
 }

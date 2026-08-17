@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 import { sendChatQueryStreamApi, getChatsApi, deleteChatApi, getChatMessagesApi } from '../api/chat';
 
 export function useChat(userId) {
@@ -12,6 +13,8 @@ export function useChat(userId) {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [selectedSource, setSelectedSource] = useState(null);
+  const [chatToDelete, setChatToDelete] = useState(null);
+  const [isDeletingChat, setIsDeletingChat] = useState(false);
   const messagesEndRef = useRef(null);
 
   const fetchChats = useCallback(async () => {
@@ -20,6 +23,7 @@ export function useChat(userId) {
       setChatSessions(data || []);
     } catch (e) {
       console.error('Failed to fetch chats', e);
+      toast.error('Failed to load past conversations.');
     }
   }, []);
 
@@ -44,6 +48,7 @@ export function useChat(userId) {
       setMessages((data || []).map((m, i) => ({ id: m.id ?? `loaded-${i}`, ...m })));
     } catch (e) {
       console.error('Failed to load chat messages', e);
+      toast.error('Failed to load conversation history.');
     } finally {
       setIsLoading(false);
     }
@@ -54,20 +59,30 @@ export function useChat(userId) {
     setMessages([]);
   }, []);
 
-  const handleDeleteChat = useCallback(async (e, chatId) => {
-    e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this conversation?")) return;
+  const confirmDeleteChat = useCallback(async () => {
+    if (!chatToDelete) return;
+    setIsDeletingChat(true);
 
     try {
-      await deleteChatApi(chatId);
-      setChatSessions((prev) => prev.filter((c) => c.id !== chatId));
-      if (activeChatId === chatId) {
+      await deleteChatApi(chatToDelete.id);
+      setChatSessions((prev) => prev.filter((c) => c.id !== chatToDelete.id));
+      if (activeChatId === chatToDelete.id) {
         handleNewChat();
       }
+      toast.success('Conversation deleted.');
+      setChatToDelete(null);
     } catch (err) {
       console.error("Failed to delete chat", err);
+      toast.error(err.message || 'Failed to delete conversation.');
+    } finally {
+      setIsDeletingChat(false);
     }
-  }, [activeChatId, handleNewChat]);
+  }, [chatToDelete, activeChatId, handleNewChat]);
+
+  const handleDeleteChatPrompt = useCallback((e, chat) => {
+    e.stopPropagation();
+    setChatToDelete(chat);
+  }, []);
 
   const handleQuickAction = useCallback((text, source) => {
     setInput(text);
@@ -134,23 +149,23 @@ export function useChat(userId) {
         fetchChats();
       }
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Chat query error:', error);
+      toast.error(error.message || 'Failed to get response from CampusMind.');
       setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === botMessageId && !msg.content
-            ? {
-                ...msg,
-                content:
-                  'Sorry, I encountered an error. Please try again later. Is the backend running?',
-              }
-            : msg
-        )
+        prev.map((msg) => {
+          if (msg.id !== botMessageId) return msg;
+          const prefix = msg.content ? `${msg.content}\n\n` : '';
+          return {
+            ...msg,
+            isError: true,
+            content: `${prefix}⚠️ *An error occurred while generating the response. Please try again.*`,
+          };
+        })
       );
     } finally {
       setIsLoading(false);
     }
   }, [input, selectedSource, activeChatId, fetchChats]);
-
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -169,10 +184,14 @@ export function useChat(userId) {
     handleInputChange,
     isLoading,
     messagesEndRef,
+    chatToDelete,
+    setChatToDelete,
+    isDeletingChat,
+    confirmDeleteChat,
     fetchChats,
     loadChat,
     handleNewChat,
-    handleDeleteChat,
+    handleDeleteChatPrompt,
     handleQuickAction,
     sendMessage,
   };

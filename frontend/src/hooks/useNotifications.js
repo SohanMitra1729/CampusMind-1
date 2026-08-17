@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { toast } from 'sonner';
 import { getNotificationsApi, markNotificationReadApi, markAllNotificationsReadApi } from '../api/notices';
 
 function formatNotifTime(iso) {
@@ -75,8 +76,10 @@ export function useNotifications(userId) {
     setNotifications(prev => prev.map(n => ({ ...n, unread: false })));
     try {
       await markAllNotificationsReadApi();
+      toast.success('All notifications marked as read.');
     } catch (e) {
       console.error('Failed to mark all read', e);
+      toast.error('Failed to update notifications.');
     }
   }, []);
 
@@ -89,6 +92,7 @@ export function useNotifications(userId) {
         await markNotificationReadApi(id);
       } catch (e) {
         console.error('Failed to mark notification read', e);
+        toast.error('Failed to update notification state.');
       }
     }
   }, [notifications]);
