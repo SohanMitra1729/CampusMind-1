@@ -3,9 +3,9 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { sendChatQueryApi, getChatsApi, deleteChatApi, getChatMessagesApi } from '../api/chat';
+import { sendChatQueryStreamApi, getChatsApi, deleteChatApi, getChatMessagesApi } from '../api/chat';
 
-export function useChat(userId, onComplaintDetect) {
+export function useChat(userId) {
   const [messages, setMessages] = useState([]);
   const [chatSessions, setChatSessions] = useState([]);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -88,48 +88,69 @@ export function useChat(userId, onComplaintDetect) {
 
     const inputText = input;
     const userMessage = { id: crypto.randomUUID(), role: 'user', content: inputText };
-    setMessages((prev) => [...prev, userMessage]);
+    const botMessageId = crypto.randomUUID();
+
+    // Create user message AND initial empty bot message for streaming tokens
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      { id: botMessageId, role: 'bot', content: '', metadata: {} },
+    ]);
     setInput('');
     setIsLoading(true);
-    setSelectedSource(null); // Always clear source on send
 
     const metadata_filter = selectedSource ? { source: selectedSource } : null;
     setSelectedSource(null);
 
-    if (userId && onComplaintDetect) {
-      onComplaintDetect(inputText);
-    }
-
     try {
-      const data = await sendChatQueryApi(inputText, activeChatId, metadata_filter);
-      const botMessage = {
-        id: data.message_id ?? crypto.randomUUID(),
-        role: 'bot',
-        content: data.answer,
-        context: data.context,
-        metadata: data.metadata,
-      };
-
-      setMessages((prev) => [...prev, botMessage]);
-
-      if (data.chat_id) {
-        if (!activeChatId) {
-          setActiveChatId(data.chat_id);
+      const finalResult = await sendChatQueryStreamApi(
+        inputText,
+        activeChatId,
+        metadata_filter,
+        (token) => {
+          setMessages((prev) =>
+            prev.map((msg) =>
+              msg.id === botMessageId
+                ? { ...msg, content: msg.content + token }
+                : msg
+            )
+          );
         }
+      );
+
+      // Attach final metadata/sources if available
+      if (finalResult.sources && finalResult.sources.length > 0) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId
+              ? { ...msg, metadata: { ...msg.metadata, sources: finalResult.sources } }
+              : msg
+          )
+        );
+      }
+
+      if (!activeChatId && finalResult.chat_id) {
+        setActiveChatId(finalResult.chat_id);
         fetchChats();
       }
     } catch (error) {
       console.error('Error:', error);
-      const errorMessage = {
-        id: crypto.randomUUID(),
-        role: 'bot',
-        content: 'Sorry, I encountered an error. Please try again later. Is the backend running?',
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId && !msg.content
+            ? {
+                ...msg,
+                content:
+                  'Sorry, I encountered an error. Please try again later. Is the backend running?',
+              }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
-  }, [input, selectedSource, userId, onComplaintDetect, activeChatId, fetchChats]);
+  }, [input, selectedSource, activeChatId, fetchChats]);
+
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

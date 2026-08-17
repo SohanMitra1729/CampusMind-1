@@ -5,7 +5,12 @@ Orchestrates the full chat pipeline:
   1. Create or validate the chat session
   2. Persist the user message
   3. Fetch recent history for RAG context
-  4. Run the RAG pipeline (get_answer)
+  3b. [COMPLAINT SHORTCUT] If an active complaint session exists → route to
+      the conversational dialogue agent (skip RAG entirely).
+  3c. [COMPLAINT DETECT] Classify the message first; if it is a complaint
+      with confidence >= 0.60, start a new dialogue session and return the
+      intake prompt (skip RAG entirely — no mixed messages).
+  4. Run the RAG pipeline (only when message is NOT a complaint)
   5. Persist the bot reply
 
 Why a service?
@@ -18,6 +23,15 @@ Why a service?
 from typing import Any, Dict, Optional
 import app.repositories.chat_repository as chat_repo
 from app.services.rag_service import get_answer
+from app.services.complaint_agent import classify_complaint
+from app.services.complaint_dialogue_agent import (
+    has_active_complaint_session,
+    handle_complaint_turn,
+    start_complaint_session,
+)
+
+# Minimum classification confidence to trigger conversational complaint intake
+_COMPLAINT_CONFIDENCE_THRESHOLD = 0.60
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -77,7 +91,57 @@ async def handle_chat(
     # Last 6 messages = ~3 user/bot turns; keeps the prompt short but contextual
     chat_history = chat_repo.get_recent_history(chat_id, limit=6)
 
+    # ── Step 3b: Complaint dialogue shortcut ──────────────────────────────────
+    # If a multi-turn complaint session is already in progress for this chat,
+    # route directly to the dialogue agent — skip RAG entirely.
+    if has_active_complaint_session(chat_id):
+        dialogue_reply = handle_complaint_turn(
+            chat_id=chat_id,
+            user_message=query,
+            user_info=user_info,
+        )
+        if dialogue_reply is not None:
+            chat_repo.add_message(chat_id, "bot", dialogue_reply)
+            return {
+                "answer":  dialogue_reply,
+                "sources": [],
+                "chat_id": chat_id,
+                "title":   title,
+            }
+        # dialogue_reply is None → session was cleared, fall through to RAG
+
+    # ── Step 3c: Detect new complaint intent BEFORE running RAG ───────────────
+    # Classify first so the user gets a clean, focused complaint intake prompt
+    # instead of a contradictory mix of "contact staff" + "file a complaint".
+    try:
+        clf = classify_complaint(query)
+        if (
+            clf.get("is_complaint")
+            and float(clf.get("confidence", 0)) >= _COMPLAINT_CONFIDENCE_THRESHOLD
+            and clf.get("category") != "not_complaint"
+        ):
+            intake_prompt = start_complaint_session(
+                chat_id=chat_id,
+                complaint_text=query,
+                classification=clf,
+                user_info=user_info,
+            )
+            chat_repo.add_message(chat_id, "bot", intake_prompt)
+            return {
+                "answer":  intake_prompt,
+                "sources": [],
+                "chat_id": chat_id,
+                "title":   title,
+            }
+    except Exception as clf_err:
+        # Classify is non-critical — never let it block the chat response
+        import logging
+        logging.getLogger(__name__).warning(
+            f"[ChatService] classify error (non-fatal): {clf_err}"
+        )
+
     # ── Step 4: Run the RAG pipeline ──────────────────────────────────────────
+    # Only reached when the message is clearly NOT a complaint.
     result = await get_answer(
         query,
         metadata_filter=metadata_filter,
@@ -119,3 +183,4 @@ def get_chat_messages(chat_id: str, user_id: str):
     if not chat:
         raise PermissionError("Chat not found or access denied.")
     return chat_repo.get_chat_messages(chat_id)
+

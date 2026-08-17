@@ -6,7 +6,6 @@ import { useState } from 'react';
 import { Menu } from 'lucide-react';
 import Sidebar from '../components/chat/Sidebar';
 import MessageList from '../components/chat/MessageList';
-import ComplaintBanner from '../components/chat/ComplaintBanner';
 import NotificationDrawer from '../components/chat/NotificationDrawer';
 import MyComplaintsModal from '../components/chat/MyComplaintsModal';
 import { useNotifications } from '../hooks/useNotifications';
@@ -29,25 +28,12 @@ export default function ChatPage({ user, onLogout }) {
   } = useNotifications(user?.id);
 
   const {
-    hostels,
-    complaintPending,
-    setComplaintPending,
-    complaintSubmitting,
-    complaintResult,
-    votedComplaints,
-    selectedHostelId,
-    setSelectedHostelId,
-    roomNumber,
-    setRoomNumber,
     showMyComplaints,
     setShowMyComplaints,
     myComplaints,
     myComplaintsLoading,
-    detectComplaint,
     fetchMyComplaints,
-    submitComplaint,
     upvoteComplaint,
-    resetComplaintState,
   } = useComplaints(user?.id);
 
   const {
@@ -63,10 +49,9 @@ export default function ChatPage({ user, onLogout }) {
     handleDeleteChat,
     handleQuickAction,
     sendMessage,
-  } = useChat(user?.id, detectComplaint);
+  } = useChat(user?.id);
 
   const handleFormSubmit = async (e) => {
-    resetComplaintState();
     await sendMessage(e);
   };
 
@@ -114,21 +99,6 @@ export default function ChatPage({ user, onLogout }) {
             <div className="chat-header-subtitle">NIT Silchar Knowledge & Complaint Network</div>
           </div>
         </header>
-
-        <ComplaintBanner
-          complaintPending={complaintPending}
-          setComplaintPending={setComplaintPending}
-          hostels={hostels}
-          selectedHostelId={selectedHostelId}
-          setSelectedHostelId={setSelectedHostelId}
-          roomNumber={roomNumber}
-          setRoomNumber={setRoomNumber}
-          onSubmitComplaint={submitComplaint}
-          complaintSubmitting={complaintSubmitting}
-          complaintResult={complaintResult}
-          onVote={upvoteComplaint}
-          votedComplaints={votedComplaints}
-        />
 
         <MessageList
           messages={messages}

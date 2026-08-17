@@ -82,3 +82,4 @@ def execute_hybrid_search(
     }
     res = supabase.rpc("hybrid_search", rpc_params).execute()
     return res.data or []
+

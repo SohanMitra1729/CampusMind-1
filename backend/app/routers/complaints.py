@@ -14,10 +14,9 @@ Handles:
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Depends
 
-from app.core.security import get_current_user, get_current_user_optional, require_admin
+from app.core.security import get_current_user, require_admin
 from app.core.deps import fetch_profile
 from app.schemas.complaint import (
-    ComplaintClassifyRequest,
     ComplaintRequest,
     ComplaintStatusRequest,
 )
@@ -38,14 +37,6 @@ async def list_hostels():
 
 
 # ── Student: complaints ────────────────────────────────────────────────────────
-
-@router.post("/api/complaint/classify")
-async def complaint_classify(
-    req: ComplaintClassifyRequest,
-    current_user=Depends(get_current_user_optional),
-):
-    """Fast LLM classification — no DB writes. Used for live frontend feedback."""
-    return complaint_service.classify_only(req.text)
 
 
 @router.post("/api/complaint")
