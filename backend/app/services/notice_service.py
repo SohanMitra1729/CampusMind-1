@@ -157,11 +157,12 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
             all_texts    = [c["content"] for c in chunks]
             found_ids    = extract_scholar_ids(all_texts)
             is_broadcast = len(found_ids) == 0
-            notif        = craft_notification(doc_type, summary, is_broadcast, title=filename.replace(".pdf", ""))
+            clean_title  = filename.replace(".pdf", "").strip()
+            notif_msg    = summary if summary and summary != filename else f"New {doc_type.replace('_', ' ')}: {clean_title}"
             users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
 
             notice_row = notice_repo.create_notice({
-                "title":          filename.replace(".pdf", ""),
+                "title":          clean_title,
                 "content":        summary,
                 "notice_type":    doc_type,
                 "source_type":    "pdf",
@@ -171,7 +172,7 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
                 "notified_count": len(users),
             })
             sent = dispatch_notifications(
-                notice_row["id"], users, notif["title"], notif["message_template"], doc_type=doc_type
+                notice_row["id"], users, clean_title, notif_msg, doc_type=doc_type
             )
             agent_result["notified"] = sent
             logger.info(f"[NoticeService] Notifications dispatched: {sent}")
@@ -245,13 +246,13 @@ async def post_text_notice(title: str, content: str) -> Dict[str, Any]:
     if not title.strip() or not content.strip():
         raise ValueError("Title and content are required.")
 
-    classification = classify_document(content[:600], title)
-    doc_type     = classification.get("doc_type", "student_notice")
-    summary      = classification.get("summary", title)
-    found_ids    = extract_scholar_ids([content])
-    is_broadcast = len(found_ids) == 0
-    notif        = craft_notification(doc_type, summary, is_broadcast, title=title)
-    users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
+    classification = classify_document(content[:300], title)
+    doc_type      = classification.get("doc_type", "student_notice")
+    summary       = classification.get("summary", title)
+    found_ids     = extract_scholar_ids([content])
+    is_broadcast  = len(found_ids) == 0
+    notif_msg     = summary if summary and summary != title else content[:120].strip()
+    users         = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
     not_found_ids = [sid for sid in found_ids if sid not in {u["scholar_id"] for u in users}]
 
     notice_row = notice_repo.create_notice({
@@ -265,7 +266,7 @@ async def post_text_notice(title: str, content: str) -> Dict[str, Any]:
     })
     notice_id = notice_row["id"]
 
-    sent = dispatch_notifications(notice_id, users, notif["title"], notif["message_template"], doc_type=doc_type)
+    sent = dispatch_notifications(notice_id, users, title, notif_msg, doc_type=doc_type)
 
     # Embed notice text and store in RAG documents table
     rag_chunks     = chunk_notice_text(title, content, notice_id, doc_type, is_broadcast=is_broadcast)
@@ -308,20 +309,22 @@ def delete_notice(notice_id: str) -> Dict[str, Any]:
 def get_user_notifications(user_id: str) -> List[Dict[str, Any]]:
     """
     Fetch notifications for a student and enrich with notice_type icon,
-    source_type ('pdf' vs 'text'), and source_file for direct viewing.
+    source_type ('pdf' vs 'text'), source_file, notice_title, and notice_content for direct viewing.
     """
     notifications = notice_repo.get_user_notifications(user_id, limit=50)
     if notifications:
-        notice_ids = list({n["notice_id"] for n in notifications if n["notice_id"]})
+        notice_ids = list({n["notice_id"] for n in notifications if n.get("notice_id")})
         notice_map = notice_repo.get_notice_types_by_ids(notice_ids)
         for notif in notifications:
-            parent = notice_map.get(notif["notice_id"]) or {}
+            parent = notice_map.get(notif.get("notice_id")) or {}
             ntype = parent.get("notice_type", "general")
-            notif["notice_type"] = ntype
-            notif["source_type"] = parent.get("source_type", "text")
-            notif["source_file"] = parent.get("source_file")
+            notif["notice_type"]    = ntype
+            notif["source_type"]    = parent.get("source_type", "text")
+            notif["source_file"]    = parent.get("source_file")
+            notif["notice_title"]   = parent.get("title") or notif.get("notification_title")
             notif["notice_content"] = parent.get("content")
-            notif["icon"] = NOTICE_ICONS.get(ntype, "📄")
+            notif["is_broadcast"]   = parent.get("is_broadcast", True)
+            notif["icon"]           = NOTICE_ICONS.get(ntype, "📄")
     return notifications
 
 

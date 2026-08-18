@@ -1,14 +1,16 @@
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 export const Dialog = ({ open, onOpenChange, children }) => {
   if (!open) return null;
-  return (
+  return createPortal(
     <>
       <div className="cm-dialog-overlay" onClick={() => onOpenChange(false)} />
       <div className="cm-dialog-content">
         {children}
       </div>
-    </>
+    </>,
+    document.body
   );
 };
 

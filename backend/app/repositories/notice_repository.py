@@ -29,10 +29,10 @@ def get_all_notices(limit: int = 50) -> List[Dict[str, Any]]:
 
 
 def get_notice_types_by_ids(notice_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """Fetch notice metadata (type, source_file, content) for a batch of notice IDs."""
+    """Fetch notice metadata (type, source_file, content, title) for a batch of notice IDs."""
     if not notice_ids:
         return {}
-    res = supabase.table("notices").select("id, notice_type, source_type, source_file, title, content").in_("id", notice_ids).execute()
+    res = supabase.table("notices").select("id, notice_type, source_type, source_file, title, content, is_broadcast, created_at").in_("id", notice_ids).execute()
     return {n["id"]: n for n in (res.data or [])}
 
 

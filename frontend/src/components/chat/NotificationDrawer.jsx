@@ -31,6 +31,14 @@ export default function NotificationDrawer({
     window.open(pdfUrl, '_blank', 'noopener,noreferrer');
   };
 
+  const formatDate = (iso) => {
+    if (!iso) return selectedNotif?.time || 'Recent';
+    return new Date(iso).toLocaleString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  };
+
   return (
     <>
       {/* Student Notification Detail Modal */}
@@ -41,13 +49,16 @@ export default function NotificationDrawer({
               <span style={{ fontSize: '18px' }}>
                 {isPdfNotice ? '📄' : (selectedNotif?.icon || '📢')}
               </span>
-              <DialogTitle style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>
-                {selectedNotif?.title || 'Notice Notification'}
+              <DialogTitle style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>
+                {selectedNotif?.notice_title || selectedNotif?.title || 'Notice Notification'}
               </DialogTitle>
             </div>
-            <DialogDescription style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px', flexWrap: 'wrap' }}>
+            <DialogDescription style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '6px', flexWrap: 'wrap' }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--cm-muted)', fontSize: '12px' }}>
-                <Calendar size={13} /> {selectedNotif?.time || 'Recent'}
+                <Calendar size={13} /> {formatDate(selectedNotif?.created_at)}
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--cm-muted)', fontSize: '12px' }}>
+                <Megaphone size={13} /> {selectedNotif?.is_broadcast !== false ? 'All Campus Students' : 'Targeted Notice'}
               </span>
               {isPdfNotice && (
                 <span style={{
@@ -121,15 +132,17 @@ export default function NotificationDrawer({
           )}
 
           <div style={{
-            marginTop: 'var(--space-3)',
+            marginTop: 'var(--space-4)',
             padding: 'var(--space-4)',
             backgroundColor: 'rgba(15, 23, 42, 0.6)',
             borderRadius: 'var(--radius-md)',
             border: '1px solid var(--cm-border)',
+            maxHeight: '360px',
+            overflowY: 'auto',
+            whiteSpace: 'pre-wrap',
             lineHeight: 1.6,
             fontSize: '13px',
-            color: 'var(--cm-fg)',
-            whiteSpace: 'pre-wrap'
+            color: 'var(--cm-fg)'
           }}>
             {selectedNotif?.notice_content || selectedNotif?.message}
           </div>
