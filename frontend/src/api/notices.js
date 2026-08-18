@@ -39,6 +39,12 @@ export async function getNoticesListApi() {
   });
 }
 
+export async function deleteNoticeApi(noticeId) {
+  return apiClient(`/api/admin/notices/${noticeId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function getNotificationsApi() {
   return apiClient('/api/notifications', {
     method: 'GET',

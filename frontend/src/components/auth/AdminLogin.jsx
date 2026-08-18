@@ -8,35 +8,29 @@ import { toast } from 'sonner';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../ui/Card';
-import { adminAuthApi } from '../../api/auth';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function AdminLogin({ onAdminSuccess }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const { adminLogin, isLoading } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
 
     try {
-      const data = await adminAuthApi(username.trim(), password);
-      const token = data.token;
-      
-      sessionStorage.setItem('campusmind_admin', 'true');
-      sessionStorage.setItem('campusmind_admin_token', token);
-      sessionStorage.setItem('admin-token', token);
+      const token = await adminLogin(username.trim(), password);
       toast.success('Admin authentication successful.');
-      onAdminSuccess(token);
+      if (onAdminSuccess) {
+        onAdminSuccess(token);
+      }
     } catch (err) {
       const errMsg = err.message || 'Invalid admin credentials. Access denied.';
       setError(errMsg);
       toast.error(errMsg);
-    } finally {
-      setIsLoading(false);
     }
   };
 

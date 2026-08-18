@@ -12,6 +12,7 @@ Handles:
   PATCH  /api/notifications/{notif_id}/read
 """
 
+from pathlib import Path
 from fastapi import APIRouter, UploadFile, File, Depends
 
 from app.core.security import get_current_user, require_admin
@@ -19,6 +20,7 @@ from app.core.logger import logger
 from app.core.exceptions import (
     ValidationException,
     ForbiddenException,
+    NotFoundException,
     InternalServerErrorException,
 )
 from app.schemas.notice import NoticeRequest
@@ -52,6 +54,55 @@ async def list_documents(_admin=Depends(require_admin)):
         raise InternalServerErrorException("Failed to load documents list.")
 
 
+from fastapi.responses import FileResponse, Response
+from app.db.supabase import supabase
+
+PDF_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs"
+
+
+@router.get("/api/documents/{filename}/view")
+async def view_pdf_document(filename: str):
+    """
+    Serve a PDF document for inline viewing in a browser tab.
+      1. Checks local disk cache (fast for local development).
+      2. If not found on local disk (e.g. on Render with ephemeral disk),
+         streams directly from Supabase Cloud Storage.
+    """
+    # 1. Check local cache
+    file_path = PDF_DIR / filename
+    if not file_path.exists():
+        alt_path = Path("data/pdfs") / filename
+        if alt_path.exists():
+            file_path = alt_path
+
+    if file_path.exists():
+        return FileResponse(
+            path=str(file_path),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename=\"{filename}\"",
+                "Cache-Control": "public, max-age=86400",
+            },
+        )
+
+    # 2. Fetch from Supabase Cloud Storage (permanent persistence on Render)
+    try:
+        pdf_bytes = supabase.storage.from_("campus-documents").download(filename)
+        if pdf_bytes:
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f"inline; filename=\"{filename}\"",
+                    "Cache-Control": "public, max-age=86400",
+                },
+            )
+    except Exception as e:
+        logger.warning(f"[Notices] Supabase storage download error for '{filename}': {e}")
+
+    raise NotFoundException(f"Document '{filename}' not found.")
+
+
 @router.delete("/api/admin/documents/{filename}")
 async def delete_document(filename: str, _admin=Depends(require_admin)):
     try:
@@ -83,6 +134,16 @@ async def list_notices(_admin=Depends(require_admin)):
     except Exception as e:
         logger.exception(f"[Notices] list_notices error: {e}")
         raise InternalServerErrorException("Failed to load notices list.")
+
+
+@router.delete("/api/admin/notices/{notice_id}")
+async def delete_notice(notice_id: str, _admin=Depends(require_admin)):
+    """Delete a broadcast notice, its user notifications, and its pgvector chunks."""
+    try:
+        return notice_service.delete_notice(notice_id)
+    except Exception as e:
+        logger.exception(f"[Notices] delete_notice error for {notice_id}: {e}")
+        raise InternalServerErrorException("Failed to delete notice.")
 
 
 # ── Student: notifications ─────────────────────────────────────────────────────

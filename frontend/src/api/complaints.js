@@ -47,3 +47,9 @@ export async function updateComplaintStatusApi(complaintId, status) {
     body: JSON.stringify({ status }),
   });
 }
+
+export async function deleteComplaintApi(complaintId) {
+  return apiClient(`/api/admin/complaints/${complaintId}`, {
+    method: 'DELETE',
+  });
+}

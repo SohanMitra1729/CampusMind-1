@@ -11,7 +11,7 @@ import DocumentIngestion from '../components/admin/DocumentIngestion';
 import NoticeBroadcast from '../components/admin/NoticeBroadcast';
 import ComplaintManagement from '../components/admin/ComplaintManagement';
 import { useAdminComplaints } from '../hooks/useAdminComplaints';
-import { uploadDocumentApi, getDocumentsApi, deleteDocumentApi, postNoticeApi, getNoticesListApi } from '../api/notices';
+import { uploadDocumentApi, getDocumentsApi, deleteDocumentApi, postNoticeApi, getNoticesListApi, deleteNoticeApi } from '../api/notices';
 
 const NOTICE_TYPE_LABELS = {
   holiday:        { label: 'Holiday',        icon: '🏖️', color: 'emerald' },
@@ -47,6 +47,8 @@ export default function AdminPage({ onBack }) {
   const [noticeResult, setNoticeResult] = useState(null);
   const [postedNotices, setPostedNotices] = useState([]);
   const [isLoadingNotices, setIsLoadingNotices] = useState(false);
+  const [noticeToDelete, setNoticeToDelete] = useState(null);
+  const [isDeletingNotice, setIsDeletingNotice] = useState(false);
 
   // ── Complaints (via hook) ──
   const {
@@ -61,8 +63,10 @@ export default function AdminPage({ onBack }) {
     complaintScopeFilter,
     setComplaintScopeFilter,
     updatingComplaintId,
+    deletingComplaintId,
     fetchComplaints,
     updateComplaintStatus,
+    deleteComplaint,
   } = useAdminComplaints();
 
   // ── Fetch functions ──
@@ -159,8 +163,13 @@ export default function AdminPage({ onBack }) {
       setUploadAlert({ type: 'success', text: msg });
       toast.success(msg);
 
-      if (data.agent) {
-        setAgentResult(data.agent);
+      if (data) {
+        setAgentResult({
+          filename: selectedFile.name,
+          contentType: data.content_type_detected,
+          chunksCreated: data.chunks_created,
+          ...(data.agent || {}),
+        });
       }
 
       setSelectedFile(null);
@@ -218,11 +227,28 @@ export default function AdminPage({ onBack }) {
       setNoticeTitle('');
       setNoticeContent('');
       fetchPostedNotices();
+      fetchDocuments();
     } catch (err) {
       setNoticeAlert({ type: 'error', text: err.message });
       toast.error(err.message || 'Failed to broadcast notice.');
     } finally {
       setIsPostingNotice(false);
+    }
+  };
+
+  const confirmDeleteNotice = async () => {
+    if (!noticeToDelete) return;
+    setIsDeletingNotice(true);
+    try {
+      await deleteNoticeApi(noticeToDelete.id);
+      toast.success(`Deleted notice '${noticeToDelete.title}'.`);
+      setNoticeToDelete(null);
+      fetchPostedNotices();
+      fetchDocuments();
+    } catch (err) {
+      toast.error(err.message || 'Failed to delete notice.');
+    } finally {
+      setIsDeletingNotice(false);
     }
   };
 
@@ -245,6 +271,17 @@ export default function AdminPage({ onBack }) {
         variant="destructive"
         isLoading={isDeletingDoc}
         onConfirm={confirmDeleteDoc}
+      />
+
+      <ConfirmDialog
+        open={Boolean(noticeToDelete)}
+        onOpenChange={(open) => { if (!open) setNoticeToDelete(null); }}
+        title="Delete Broadcast Notice?"
+        description={`Are you sure you want to delete "${noticeToDelete?.title}"? All student notifications and associated RAG knowledge chunks will be removed.`}
+        confirmLabel="Delete Notice"
+        variant="destructive"
+        isLoading={isDeletingNotice}
+        onConfirm={confirmDeleteNotice}
       />
 
       <header className="admin-navbar">
@@ -313,6 +350,7 @@ export default function AdminPage({ onBack }) {
               postedNotices={postedNotices}
               isLoadingNotices={isLoadingNotices}
               fetchPostedNotices={fetchPostedNotices}
+              onDeleteNotice={(n) => setNoticeToDelete(n)}
               formatDate={formatDate}
               NOTICE_TYPE_LABELS={NOTICE_TYPE_LABELS}
             />
@@ -333,6 +371,8 @@ export default function AdminPage({ onBack }) {
               fetchComplaints={fetchComplaints}
               updateComplaintStatus={updateComplaintStatus}
               updatingComplaintId={updatingComplaintId}
+              deleteComplaint={deleteComplaint}
+              deletingComplaintId={deletingComplaintId}
               formatDate={formatDate}
             />
           )}

@@ -28,12 +28,12 @@ def get_all_notices(limit: int = 50) -> List[Dict[str, Any]]:
     return res.data or []
 
 
-def get_notice_types_by_ids(notice_ids: List[str]) -> Dict[str, str]:
-    """Fetch notice_type for a batch of notice IDs, returning a mapping {notice_id: notice_type}."""
+def get_notice_types_by_ids(notice_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch notice metadata (type, source_file, content) for a batch of notice IDs."""
     if not notice_ids:
         return {}
-    res = supabase.table("notices").select("id, notice_type").in_("id", notice_ids).execute()
-    return {n["id"]: n["notice_type"] for n in (res.data or [])}
+    res = supabase.table("notices").select("id, notice_type, source_type, source_file, title, content").in_("id", notice_ids).execute()
+    return {n["id"]: n for n in (res.data or [])}
 
 
 # ── User Notifications ──────────────────────────────────────────────────────────
@@ -82,3 +82,18 @@ def mark_notification_read(notif_id: str, user_id: str) -> bool:
 def mark_all_notifications_read(user_id: str):
     """Mark all unread notifications for a user as read."""
     supabase.table("user_notifications").update({"is_read": True}).eq("user_id", user_id).eq("is_read", False).execute()
+
+
+def delete_notice_by_id(notice_id: str) -> bool:
+    """Delete a notice, its dispatched user notifications, and its pgvector chunks."""
+    try:
+        # Delete user_notifications for this notice
+        supabase.table("user_notifications").delete().eq("notice_id", notice_id).execute()
+        # Delete pgvector chunks for this notice
+        supabase.table("documents").delete().eq("metadata->>notice_id", notice_id).execute()
+        # Delete notice row
+        supabase.table("notices").delete().eq("id", notice_id).execute()
+        return True
+    except Exception as e:
+        print(f"[NoticeRepo] delete_notice_by_id error for {notice_id}: {e}")
+        return False
