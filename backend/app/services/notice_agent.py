@@ -103,25 +103,26 @@ def extract_scholar_ids(chunk_texts: list[str]) -> list[str]:
 # ── Stage 3: Craft notification (minimal context — ~80 tokens) ────────────────
 
 def craft_notification(doc_type: str, summary: str, is_broadcast: bool, title: str = "") -> dict:
-    audience = "all students" if is_broadcast else "specific students"
-    prompt = f"""You are writing a brief in-app notification for a university student portal.
+    audience = "all students" if is_broadcast else "targeted students"
+    prompt = f"""You are writing a concise student notification for a university portal.
 
 Notice Title: {title or summary}
-Document type: {doc_type}
-Summary: {summary}
+Notice Category: {doc_type}
+Summary of Notice: {summary}
 Audience: {audience}
 
-Write a short notification for students. Respond with JSON only:
+Write a short, clear notification for students.
+Respond with JSON only:
 {{
-  "title": "<concise notification title, max 50 chars>",
-  "message_template": "<informative notification body for students, max 120 chars, use {{name}} placeholder for student name if targeted>"
+  "title": "<short notification headline, max 45 chars>",
+  "message_template": "<1-2 sentence overview for the student, max 120 chars>"
 }}
 
 Rules:
-- Write for STUDENTS receiving this on their campus mobile/web app.
-- Do NOT say 'check admin portal' or 'admin panel'.
-- Make the title and message specific to the notice topic (e.g. 'Hostel LAN Advisory', 'Power Maintenance Notice').
-- Keep it friendly, clear, and actionable. No markdown."""
+- Write for STUDENTS receiving this alert.
+- Do NOT include unpopulated template tags like {{date}}, {{time}}, {{start}}, {{end}}. Write full factual sentences based on the summary.
+- Do NOT mention 'admin portal' or 'admin panel'.
+- Keep it concise, friendly, and factual. No markdown."""
 
     try:
         resp = groq_pool.chat_completion(
@@ -136,17 +137,22 @@ Rules:
         if json_match:
             parsed = json.loads(json_match.group(0))
             if parsed.get("title") and parsed.get("message_template"):
+                # Strip any leftover curly tags like {date}
+                cleaned_msg = re.sub(r'\{(?!name\})[a-zA-Z0-9_]+\}', '', parsed["message_template"]).strip()
+                parsed["message_template"] = re.sub(r'\s+', ' ', cleaned_msg)
                 return parsed
         if raw:
             parsed = json.loads(raw)
             if parsed.get("title") and parsed.get("message_template"):
+                cleaned_msg = re.sub(r'\{(?!name\})[a-zA-Z0-9_]+\}', '', parsed["message_template"]).strip()
+                parsed["message_template"] = re.sub(r'\s+', ' ', cleaned_msg)
                 return parsed
     except Exception as e:
         print(f"[NoticeAgent] craft_notification error: {e}")
 
     # Meaningful fallback
-    default_title = (title or summary or f"{doc_type.replace('_', ' ').title()} Notice")[:50]
-    default_msg = (summary if summary and summary != title else f"Important update: {default_title}")[:120]
+    default_title = (title or summary or f"{doc_type.replace('_', ' ').title()} Notice")[:45]
+    default_msg = (summary if summary and summary != title else f"Important campus notice regarding {default_title}.")[:120]
     return {
         "title": default_title,
         "message_template": default_msg,
@@ -179,6 +185,9 @@ def dispatch_notifications(
     for user in users:
         name = user.get("name") or "Student"
         message = message_template.replace("{name}", name)
+        # Remove any leftover placeholder brackets
+        message = re.sub(r'\{[a-zA-Z0-9_]+\}', '', message).strip()
+        message = re.sub(r'\s+', ' ', message)
         rows.append({
             "notice_id":            notice_id,
             "user_id":              user["id"],

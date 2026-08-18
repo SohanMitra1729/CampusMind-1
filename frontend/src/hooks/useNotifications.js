@@ -30,12 +30,18 @@ export function useNotifications(userId) {
       const data = await getNotificationsApi();
       if (Array.isArray(data)) {
         setNotifications(data.map(n => ({
-          id:      n.id,
-          title:   n.notification_title,
-          message: n.notification_message,
-          time:    formatNotifTime(n.created_at),
-          unread:  !n.is_read,
-          icon:    n.icon || '📢',
+          id:             n.id,
+          title:          n.notification_title,
+          message:        n.notification_message,
+          notice_title:   n.notice_title || n.notification_title,
+          notice_content: n.notice_content,
+          source_type:    n.source_type,
+          source_file:    n.source_file,
+          is_broadcast:   n.is_broadcast,
+          created_at:     n.created_at,
+          time:           formatNotifTime(n.created_at),
+          unread:         !n.is_read,
+          icon:           n.icon || '📢',
         })));
       }
     } catch (e) {
