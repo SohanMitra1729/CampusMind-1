@@ -30,10 +30,9 @@ Why async?
 import asyncio
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, BinaryIO
 
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
+from app.core.key_pool import gemini_pool
 import app.repositories.notice_repository as notice_repo
 import app.repositories.document_repository as doc_repo
 from app.core.logger import logger
@@ -51,77 +50,71 @@ from app.services.notice_agent import (
 )
 
 
-# ── Gemini Embeddings (lazy singleton — initialized on first use) ──────────────
-# We don't initialize at module import time so that:
-#  1. Tests and other modules can import notice_service without needing GOOGLE_API_KEY
-#  2. The key is read from the loaded .env at runtime, not at import time
-_embeddings = None
-
-def _get_embeddings():
-    global _embeddings
-    if _embeddings is None:
-        _embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
-    return _embeddings
-
 # Batching constants for rate-limit-safe embedding
 _BATCH_SIZE    = 10
-_SLEEP_BETWEEN = 7   # seconds between batches (asyncio — non-blocking)
+_SLEEP_BETWEEN = 2   # seconds between batches (asyncio — non-blocking)
+BUCKET_NAME = "campus-documents"
 
 
-# ── Private: embed with exponential backoff ────────────────────────────────────
+def _ensure_storage_bucket() -> None:
+    try:
+        supabase.storage.create_bucket(
+            BUCKET_NAME,
+            options={"public": True, "file_size_limit": 52428800} # 50MB
+        )
+    except Exception:
+        pass
+
+
+# ── Private: embed with automatic key rotation & backoff ───────────────────────
 
 async def _embed_with_retry(texts: List[str], max_retries: int = 5) -> List[List[float]]:
     """
-    Embed a list of texts using Gemini embeddings.
-    Retries up to max_retries times with exponential backoff on rate-limit errors.
-
-    We use asyncio.sleep (non-blocking) so the FastAPI event loop is never frozen
-    while we wait for the Gemini quota window to reset.
+    Embed a list of texts using Gemini embeddings via the automatic multi-key failover pool.
     """
-    embeddings = _get_embeddings()
-    for attempt in range(max_retries):
-        try:
-            return embeddings.embed_documents(texts)
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                wait = 15 * (2 ** attempt)
-                logger.warning(f"[Embed] Rate limit hit, waiting {wait}s (attempt {attempt + 1})...")
-                await asyncio.sleep(wait)
-            else:
-                raise
-    raise RuntimeError("Embedding failed after max retries.")
+    results: List[List[float]] = []
+    for text in texts:
+        emb = await gemini_pool.get_embedding_async(text)
+        results.append(emb)
+    return results
 
 
-# ── Workflow A: PDF Upload ─────────────────────────────────────────────────────
+# ── Workflow A: PDF Upload & Ingestion ────────────────────────────────────────
 
-async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
+async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
     """
-    Full PDF ingestion pipeline.
-
-    Args:
-        filename: Original filename from the UploadFile.
-        file_obj: The file-like object (UploadFile.file) to read from.
-
-    Returns:
-        {
-            message, content_type_detected, chunks_created,
-            agent: { doc_type, notifications_sent, notification_skipped }
-        }
-
-    Raises:
-        ValueError    for unsupported file type or empty PDF
-        Exception     for IO / embedding / DB errors (re-raised to route)
+    Ingest an uploaded PDF document:
+      1. Upload to Supabase Storage (permanent global CDN, safe for Render ephemeral disk)
+      2. Parse text & tables via PyPDF / pdfplumber
+      3. Generate Gemini vector embeddings
+      4. Batch insert into Supabase pgvector
+      5. Classify document type & extract scholar IDs
+      6. Dispatch targeted student notifications
     """
     if not filename or not filename.lower().endswith(".pdf"):
         raise ValueError("Only PDF documents are supported.")
 
-    # ── Save to disk ────────────────────────────────────────────────────────────
-    pdf_dir   = Path("../data/pdfs")
+    file_bytes = file_obj.read()
+
+    # ── Upload to Supabase Cloud Storage (Permanent CDN) ──────────────────────
+    try:
+        _ensure_storage_bucket()
+        supabase.storage.from_(BUCKET_NAME).upload(
+            path=filename,
+            file=file_bytes,
+            file_options={"content-type": "application/pdf", "upsert": "true"}
+        )
+        logger.info(f"[NoticeService] Uploaded '{filename}' to Supabase Storage bucket '{BUCKET_NAME}'.")
+    except Exception as storage_err:
+        logger.warning(f"[NoticeService] Supabase Storage upload warning: {storage_err}")
+
+    # ── Save temporary file for parsing ───────────────────────────────────────
+    pdf_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs"
     pdf_dir.mkdir(parents=True, exist_ok=True)
     file_path = pdf_dir / filename
 
     with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file_obj, buffer)
+        buffer.write(file_bytes)
 
     # ── Parse PDF → chunks ─────────────────────────────────────────────────────
     chunks = process_pdf(str(file_path), source_name=filename)
@@ -164,11 +157,11 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
             all_texts    = [c["content"] for c in chunks]
             found_ids    = extract_scholar_ids(all_texts)
             is_broadcast = len(found_ids) == 0
-            notif        = craft_notification(doc_type, summary, is_broadcast)
+            notif        = craft_notification(doc_type, summary, is_broadcast, title=filename.replace(".pdf", ""))
             users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
 
             notice_row = notice_repo.create_notice({
-                "title":          filename,
+                "title":          filename.replace(".pdf", ""),
                 "content":        summary,
                 "notice_type":    doc_type,
                 "source_type":    "pdf",
@@ -178,7 +171,7 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
                 "notified_count": len(users),
             })
             sent = dispatch_notifications(
-                notice_row["id"], users, notif["title"], notif["message_template"]
+                notice_row["id"], users, notif["title"], notif["message_template"], doc_type=doc_type
             )
             agent_result["notified"] = sent
             logger.info(f"[NoticeService] Notifications dispatched: {sent}")
@@ -190,43 +183,45 @@ async def upload_pdf(filename: str, file_obj) -> Dict[str, Any]:
         # Agent failure must NOT break the main upload response
         logger.error(f"[NoticeService] Agent pipeline error (non-fatal): {agent_err}")
 
-    # ── Clean up the temp file on disk (chunks are in Supabase, disk file not needed) ──
-    # This is important on cloud deployments (Render) where disk is ephemeral.
-    try:
-        if file_path.exists():
-            file_path.unlink()
-    except Exception as cleanup_err:
-        logger.warning(f"[NoticeService] Could not remove temp file '{file_path}': {cleanup_err}")
+    # Note: File is kept on disk in data/pdfs for student/admin viewing and download
 
     return {
         "message":               f"Successfully ingested '{filename}'!",
         "content_type_detected": detected_type,
         "chunks_created":        total_uploaded,
-        "agent": {
-            "doc_type":             agent_result["doc_type"],
-            "notifications_sent":   agent_result["notified"],
-            "notification_skipped": agent_result["skipped"],
-        },
+        "agent":                 agent_result,
     }
 
 
 # ── Admin: list & delete documents ────────────────────────────────────────────
 
 def list_documents() -> List[Dict[str, Any]]:
-    """Return all ingested document filenames and chunk counts."""
-    sources = doc_repo.list_all_document_sources()
-    return [{"filename": k, "chunks": v} for k, v in sources.items()]
+    """Return all ingested documents with rich metadata and chunk counts."""
+    return doc_repo.list_all_document_sources()
 
 
 def delete_document(filename: str) -> Dict[str, Any]:
     """
-    Delete all RAG chunks for a PDF and the file on disk.
-    Returns a success message dict.
+    Delete all RAG chunks for a PDF from pgvector, Supabase Cloud Storage, and local cache.
     """
     doc_repo.delete_document_by_filename(filename)
-    file_path = Path("../data/pdfs") / filename
+
+    # Remove from Supabase Storage CDN
+    try:
+        supabase.storage.from_(BUCKET_NAME).remove([filename])
+        logger.info(f"[NoticeService] Removed '{filename}' from Supabase Storage.")
+    except Exception as err:
+        logger.warning(f"[NoticeService] Could not remove '{filename}' from Supabase Storage: {err}")
+
+    # Remove from local cache
+    pdf_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs"
+    file_path = pdf_dir / filename
     if file_path.exists():
-        file_path.unlink()
+        try:
+            file_path.unlink()
+        except Exception:
+            pass
+
     return {"message": f"Deleted document '{filename}' successfully."}
 
 
@@ -255,7 +250,7 @@ async def post_text_notice(title: str, content: str) -> Dict[str, Any]:
     summary      = classification.get("summary", title)
     found_ids    = extract_scholar_ids([content])
     is_broadcast = len(found_ids) == 0
-    notif        = craft_notification(doc_type, summary, is_broadcast)
+    notif        = craft_notification(doc_type, summary, is_broadcast, title=title)
     users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
     not_found_ids = [sid for sid in found_ids if sid not in {u["scholar_id"] for u in users}]
 
@@ -270,10 +265,10 @@ async def post_text_notice(title: str, content: str) -> Dict[str, Any]:
     })
     notice_id = notice_row["id"]
 
-    sent = dispatch_notifications(notice_id, users, notif["title"], notif["message_template"])
+    sent = dispatch_notifications(notice_id, users, notif["title"], notif["message_template"], doc_type=doc_type)
 
     # Embed notice text and store in RAG documents table
-    rag_chunks     = chunk_notice_text(title, content, notice_id, doc_type)
+    rag_chunks     = chunk_notice_text(title, content, notice_id, doc_type, is_broadcast=is_broadcast)
     rag_texts      = [c["content"] for c in rag_chunks]
     rag_embeddings = await _embed_with_retry(rag_texts)
     rag_rows = [
@@ -300,21 +295,33 @@ def list_notices(limit: int = 50) -> List[Dict[str, Any]]:
     return notice_repo.get_all_notices(limit=limit)
 
 
+def delete_notice(notice_id: str) -> Dict[str, Any]:
+    """Delete a notice, its dispatched user notifications, and its pgvector chunks."""
+    success = notice_repo.delete_notice_by_id(notice_id)
+    if not success:
+        raise RuntimeError("Failed to delete notice from database.")
+    return {"message": "Notice deleted successfully.", "notice_id": notice_id}
+
+
 # ── Student notification CRUD ─────────────────────────────────────────────────
 
 def get_user_notifications(user_id: str) -> List[Dict[str, Any]]:
     """
-    Fetch notifications for a student and enrich with notice_type icon.
-    The icon is looked up from the parent notice row via a batched query.
+    Fetch notifications for a student and enrich with notice_type icon,
+    source_type ('pdf' vs 'text'), and source_file for direct viewing.
     """
     notifications = notice_repo.get_user_notifications(user_id, limit=50)
     if notifications:
         notice_ids = list({n["notice_id"] for n in notifications if n["notice_id"]})
-        type_map   = notice_repo.get_notice_types_by_ids(notice_ids)
+        notice_map = notice_repo.get_notice_types_by_ids(notice_ids)
         for notif in notifications:
-            ntype = type_map.get(notif["notice_id"], "general")
+            parent = notice_map.get(notif["notice_id"]) or {}
+            ntype = parent.get("notice_type", "general")
             notif["notice_type"] = ntype
-            notif["icon"]        = NOTICE_ICONS.get(ntype, "📄")
+            notif["source_type"] = parent.get("source_type", "text")
+            notif["source_file"] = parent.get("source_file")
+            notif["notice_content"] = parent.get("content")
+            notif["icon"] = NOTICE_ICONS.get(ntype, "📄")
     return notifications
 
 

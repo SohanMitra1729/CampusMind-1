@@ -205,3 +205,14 @@ def increment_vote_count(complaint_id: str) -> int:
 
     supabase.table("complaints").update({"vote_count": new_count}).eq("id", complaint_id).execute()
     return new_count
+
+
+def delete_complaint_by_id(complaint_id: str) -> bool:
+    """Permanently delete a complaint and its vote records from Supabase."""
+    try:
+        supabase.table("complaint_votes").delete().eq("complaint_id", complaint_id).execute()
+    except Exception as e:
+        print(f"[ComplaintRepo] cleanup votes error: {e}")
+
+    res = supabase.table("complaints").delete().eq("id", complaint_id).execute()
+    return bool(res.data)

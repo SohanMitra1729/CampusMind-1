@@ -7,7 +7,7 @@
 
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { getAdminComplaintsApi, updateComplaintStatusApi } from '../api/complaints';
+import { getAdminComplaintsApi, updateComplaintStatusApi, deleteComplaintApi } from '../api/complaints';
 
 export function useAdminComplaints() {
   const [complaints, setComplaints] = useState([]);
@@ -17,6 +17,7 @@ export function useAdminComplaints() {
   const [complaintStaffRoleFilter, setComplaintStaffRoleFilter] = useState('');
   const [complaintScopeFilter, setComplaintScopeFilter] = useState('');
   const [updatingComplaintId, setUpdatingComplaintId] = useState(null);
+  const [deletingComplaintId, setDeletingComplaintId] = useState(null);
 
   const fetchComplaints = useCallback(async (status = '', category = '', staffRole = '', scope = '') => {
     setIsLoadingComplaints(true);
@@ -40,7 +41,7 @@ export function useAdminComplaints() {
           .map(comp => comp.id === complaintId ? { ...comp, status: newStatus } : comp)
           .filter(item => !complaintStatusFilter || item.status === complaintStatusFilter)
       );
-      toast.success(`Complaint marked as "${newStatus.replace('_', ' ')}".`);
+      toast.success(`Complaint status changed to "${newStatus.replace('_', ' ')}".`);
     } catch (e) {
       console.error('Failed to update complaint status', e);
       toast.error(e.message || 'Failed to update complaint status.');
@@ -48,6 +49,20 @@ export function useAdminComplaints() {
       setUpdatingComplaintId(null);
     }
   }, [complaintStatusFilter]);
+
+  const deleteComplaint = useCallback(async (complaintId) => {
+    setDeletingComplaintId(complaintId);
+    try {
+      await deleteComplaintApi(complaintId);
+      setComplaints(prev => prev.filter(c => c.id !== complaintId));
+      toast.success('Complaint deleted permanently.');
+    } catch (e) {
+      console.error('Failed to delete complaint', e);
+      toast.error(e.message || 'Failed to delete complaint.');
+    } finally {
+      setDeletingComplaintId(null);
+    }
+  }, []);
 
   return {
     complaints,
@@ -61,7 +76,9 @@ export function useAdminComplaints() {
     complaintScopeFilter,
     setComplaintScopeFilter,
     updatingComplaintId,
+    deletingComplaintId,
     fetchComplaints,
     updateComplaintStatus,
+    deleteComplaint,
   };
 }

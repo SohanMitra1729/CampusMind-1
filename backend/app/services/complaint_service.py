@@ -165,6 +165,12 @@ def update_complaint_status(complaint_id: str, new_status: str) -> Dict[str, Any
     return {"message": f"Status updated to '{new_status}'.", "complaint": updated}
 
 
+def delete_complaint(complaint_id: str) -> Dict[str, Any]:
+    """Admin action: permanently delete a complaint."""
+    deleted = complaint_repo.delete_complaint_by_id(complaint_id)
+    return {"message": f"Complaint {complaint_id} deleted successfully.", "deleted": deleted}
+
+
 # ── Public: hostel list ────────────────────────────────────────────────────────
 
 def get_hostels() -> List[Dict[str, Any]]:

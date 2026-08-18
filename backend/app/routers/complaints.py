@@ -129,3 +129,16 @@ async def update_complaint_status(
     except Exception as e:
         logger.exception(f"[Complaints] update_complaint_status error: {e}")
         raise InternalServerErrorException("Failed to update complaint status.")
+
+
+@router.delete("/api/admin/complaints/{complaint_id}")
+async def delete_complaint(
+    complaint_id: str,
+    _admin=Depends(require_admin),
+):
+    """Admin action: permanently delete a complaint."""
+    try:
+        return complaint_service.delete_complaint(complaint_id)
+    except Exception as e:
+        logger.exception(f"[Complaints] delete_complaint error for {complaint_id}: {e}")
+        raise InternalServerErrorException("Failed to delete complaint.")

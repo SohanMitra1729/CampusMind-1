@@ -12,12 +12,10 @@ import re
 import os
 import json
 from typing import Optional
-from groq import Groq
+from app.core.key_pool import groq_pool
 from app.core.config import settings
 import app.repositories.user_repository as user_repo
 import app.repositories.notice_repository as notice_repo
-
-groq_client = Groq(api_key=settings.GROQ_API_KEY or "placeholder_key")
 
 NOTIFY_TYPES = {
     "holiday",
@@ -75,14 +73,17 @@ Rules:
 - is_targeted = true ONLY when you see or expect specific registration numbers / roll numbers / names of individual students"""
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = groq_pool.chat_completion(
             messages=[{"role": "user", "content": prompt}],
             model=settings.GROQ_MODEL,
             temperature=0.0,
-            max_tokens=120,
+            max_tokens=500,
         )
         raw = resp.choices[0].message.content.strip()
         raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
+        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group(0))
         return json.loads(raw)
     except Exception as e:
         print(f"[NoticeAgent] classify_document error: {e}")
@@ -101,38 +102,55 @@ def extract_scholar_ids(chunk_texts: list[str]) -> list[str]:
 
 # ── Stage 3: Craft notification (minimal context — ~80 tokens) ────────────────
 
-def craft_notification(doc_type: str, summary: str, is_broadcast: bool) -> dict:
+def craft_notification(doc_type: str, summary: str, is_broadcast: bool, title: str = "") -> dict:
     audience = "all students" if is_broadcast else "specific students"
     prompt = f"""You are writing a brief in-app notification for a university student portal.
 
+Notice Title: {title or summary}
 Document type: {doc_type}
 Summary: {summary}
 Audience: {audience}
 
-Write a short notification. Respond with JSON only:
+Write a short notification for students. Respond with JSON only:
 {{
-  "title": "<short notification title, max 60 chars>",
-  "message_template": "<notification body, max 120 chars, use {{name}} placeholder for student name if targeted>"
+  "title": "<concise notification title, max 50 chars>",
+  "message_template": "<informative notification body for students, max 120 chars, use {{name}} placeholder for student name if targeted>"
 }}
 
-Keep it friendly, clear, and actionable. No markdown."""
+Rules:
+- Write for STUDENTS receiving this on their campus mobile/web app.
+- Do NOT say 'check admin portal' or 'admin panel'.
+- Make the title and message specific to the notice topic (e.g. 'Hostel LAN Advisory', 'Power Maintenance Notice').
+- Keep it friendly, clear, and actionable. No markdown."""
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = groq_pool.chat_completion(
             messages=[{"role": "user", "content": prompt}],
             model=settings.GROQ_MODEL,
             temperature=0.3,
-            max_tokens=100,
+            max_tokens=500,
         )
         raw = resp.choices[0].message.content.strip()
         raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
-        return json.loads(raw)
+        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if json_match:
+            parsed = json.loads(json_match.group(0))
+            if parsed.get("title") and parsed.get("message_template"):
+                return parsed
+        if raw:
+            parsed = json.loads(raw)
+            if parsed.get("title") and parsed.get("message_template"):
+                return parsed
     except Exception as e:
         print(f"[NoticeAgent] craft_notification error: {e}")
-        return {
-            "title": "New Notice Posted",
-            "message_template": f"A new {doc_type.replace('_', ' ')} has been posted. Please check the admin portal.",
-        }
+
+    # Meaningful fallback
+    default_title = (title or summary or f"{doc_type.replace('_', ' ').title()} Notice")[:50]
+    default_msg = (summary if summary and summary != title else f"Important update: {default_title}")[:120]
+    return {
+        "title": default_title,
+        "message_template": default_msg,
+    }
 
 
 # ── Resolve scholar IDs → profile rows ───────────────────────────────────────
@@ -197,20 +215,31 @@ def dispatch_notifications(
 
 # ── Text-notice chunker (for Workflow B RAG ingestion) ───────────────────────
 
-def chunk_notice_text(title: str, content: str, notice_id: str, notice_type: str) -> list[dict]:
+def chunk_notice_text(
+    title: str,
+    content: str,
+    notice_id: str,
+    notice_type: str,
+    is_broadcast: bool = True
+) -> list[dict]:
     MAX_CHARS = 800
     full_text = f"{title}\n\n{content}"
+    safe_filename = f"{title[:40].strip()} (Notice).txt"
     chunks = []
     for i in range(0, len(full_text), MAX_CHARS):
         chunk_text = full_text[i : i + MAX_CHARS]
         chunks.append({
             "content": chunk_text,
             "metadata": {
-                "source": "notices",
+                "source": f"notice_{notice_id}",
+                "filename": safe_filename,
                 "notice_id": notice_id,
                 "notice_type": notice_type,
                 "title": title,
-                "content_type": "notice",
+                "category": notice_type,
+                "content_type": "text",
+                "department": "Campus Administration",
+                "audience": "All Students" if is_broadcast else "Targeted Scholars",
             },
         })
     return chunks

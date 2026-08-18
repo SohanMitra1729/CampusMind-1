@@ -1,77 +1,132 @@
 /**
- * src/components/admin/ComplaintManagement.jsx — Complaints Admin Table & Status Action Buttons
- *
- * Shows assigned staff role badge, scope badge, filters for status/category/role/scope,
- * and allows admins to update complaint statuses.
+ * src/components/admin/ComplaintManagement.jsx — Complaints Admin Dashboard & Ticket Lifecycle
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Provides:
+ *   1. Filterable status pills, category, staff role, and boundary scope selectors
+ *   2. Modern ticket cards with Lucide icons, clear metadata hierarchy, and location chips
+ *   3. Explicit, sensible status lifecycle transitions:
+ *      - Open ➔ In Progress / Resolved / Dismissed / Delete
+ *      - In Progress ➔ Resolved / Revert to Open / Dismiss / Delete
+ *      - Resolved ➔ Reopen / Delete
+ *      - Dismissed ➔ Reopen / Delete Permanently
+ *   4. Permanent delete confirmation modal
  */
 
-import { AlertCircle, RefreshCw, Users, User as UserIcon, Home, DoorOpen } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import {
+  AlertCircle,
+  RefreshCw,
+  Users,
+  User,
+  Home,
+  DoorOpen,
+  Zap,
+  Brush,
+  Wrench,
+  UtensilsCrossed,
+  ShieldCheck,
+  Building2,
+  CheckCircle2,
+  Clock,
+  XCircle,
+  RotateCcw,
+  Trash2,
+  ArrowRight,
+  GraduationCap,
+  Bus,
+  Tag,
+  ThumbsUp,
+} from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Badge } from '../ui/Badge';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 
-// Staff role display metadata
+// Category metadata with Lucide icons
+const CATEGORY_META = {
+  hostel:    { label: 'Hostel',    icon: Home,            color: '#60a5fa', bg: 'rgba(59,130,246,0.12)' },
+  academic:  { label: 'Academic',  icon: GraduationCap,   color: '#a78bfa', bg: 'rgba(167,139,250,0.12)' },
+  facility:  { label: 'Facility',  icon: Wrench,          color: '#38bdf8', bg: 'rgba(56,189,248,0.12)' },
+  mess:      { label: 'Mess',      icon: UtensilsCrossed, color: '#fb923c', bg: 'rgba(251,146,60,0.12)' },
+  transport: { label: 'Transport', icon: Bus,             color: '#f472b6', bg: 'rgba(244,114,182,0.12)' },
+  admin:     { label: 'Admin',     icon: Building2,       color: '#94a3b8', bg: 'rgba(148,163,184,0.12)' },
+  general:   { label: 'General',   icon: Tag,             color: '#cbd5e1', bg: 'rgba(203,213,225,0.12)' },
+};
+
+// Staff role metadata with Lucide icons
 const STAFF_ROLE_META = {
-  electrical:   { label: 'Electrical / Maintenance',               icon: '⚡',   badgeStyle: { background: 'rgba(234,179,8,0.15)',  color: '#facc15', border: '1px solid rgba(234,179,8,0.3)'  } },
-  cleaning:     { label: 'Cleaning Staff',                         icon: '🧹',  badgeStyle: { background: 'rgba(34,197,94,0.12)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' } },
-  maintenance:  { label: 'Maintenance (Furniture / Plumbing)',     icon: '🛠️',  badgeStyle: { background: 'rgba(14,165,233,0.12)', color: '#38bdf8', border: '1px solid rgba(14,165,233,0.3)' } },
-  mess_manager: { label: 'Mess Manager',                          icon: '🍽️', badgeStyle: { background: 'rgba(249,115,22,0.12)', color: '#fb923c', border: '1px solid rgba(249,115,22,0.3)' } },
-  watchmen:     { label: 'Watchmen / Security',                   icon: '🔒',  badgeStyle: { background: 'rgba(99,102,241,0.12)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' } },
+  electrical:   { label: 'Electrical',    icon: Zap,             color: '#facc15', bg: 'rgba(250,204,21,0.12)', border: 'rgba(250,204,21,0.3)' },
+  cleaning:     { label: 'Cleaning Staff',icon: Brush,           color: '#4ade80', bg: 'rgba(74,222,128,0.12)', border: 'rgba(74,222,128,0.3)' },
+  maintenance:  { label: 'Maintenance',   icon: Wrench,          color: '#38bdf8', bg: 'rgba(56,189,248,0.12)', border: 'rgba(56,189,248,0.3)' },
+  mess_manager: { label: 'Mess Manager',  icon: UtensilsCrossed, color: '#fb923c', bg: 'rgba(251,146,60,0.12)', border: 'rgba(251,146,60,0.3)' },
+  watchmen:     { label: 'Security Staff',icon: ShieldCheck,     color: '#818cf8', bg: 'rgba(129,140,248,0.12)', border: 'rgba(129,140,248,0.3)' },
 };
 
-// Scope display metadata
+// Scope display metadata with Lucide icons
 const SCOPE_META = {
-  MESS:            { label: 'Mess / Dining',        icon: '🍽️', badgeStyle: { background: 'rgba(236,72,153,0.12)', color: '#f472b6', border: '1px solid rgba(236,72,153,0.3)' } },
-  ROOM_SHARED:     { label: 'Room Shared Fixture',  icon: '👥', badgeStyle: { background: 'rgba(168,85,247,0.12)', color: '#c084fc', border: '1px solid rgba(168,85,247,0.3)' } },
-  ROOM_INDIVIDUAL: { label: 'Personal Item',        icon: '👤', badgeStyle: { background: 'rgba(59,130,246,0.12)', color: '#60a5fa', border: '1px solid rgba(59,130,246,0.3)' } },
-  COMMON_AREA:     { label: 'Common Area',          icon: '🏢', badgeStyle: { background: 'rgba(100,116,139,0.12)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.3)' } },
-};
-
-const UNASSIGNED_STYLE = {
-  background: 'rgba(100,116,139,0.12)',
-  color: '#94a3b8',
-  border: '1px solid rgba(100,116,139,0.3)',
+  MESS:            { label: 'Mess Dining',  icon: UtensilsCrossed, color: '#f472b6', bg: 'rgba(244,114,182,0.12)', border: 'rgba(244,114,182,0.3)' },
+  ROOM_SHARED:     { label: 'Room Shared',  icon: Users,           color: '#c084fc', bg: 'rgba(192,132,252,0.12)', border: 'rgba(192,132,252,0.3)' },
+  ROOM_INDIVIDUAL: { label: 'Personal Item',icon: User,            color: '#60a5fa', bg: 'rgba(96,165,250,0.12)', border: 'rgba(96,165,250,0.3)' },
+  COMMON_AREA:     { label: 'Common Area',  icon: Building2,       color: '#94a3b8', bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.3)' },
 };
 
 function StaffRoleBadge({ role }) {
   const meta = STAFF_ROLE_META[role];
   if (!meta) {
     return (
-      <span style={{
-        ...UNASSIGNED_STYLE,
-        fontSize: '10px', padding: '2px 8px', borderRadius: '999px',
-        fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px',
-      }}>
-        🏛️ Unassigned / Academic
+      <span className="admin-ticket-chip" style={{ background: 'rgba(100,116,139,0.12)', color: '#94a3b8', border: '1px solid rgba(100,116,139,0.25)' }}>
+        <Building2 size={11} /> Unassigned / Academic
       </span>
     );
   }
+  const IconComp = meta.icon;
   return (
-    <span style={{
-      ...meta.badgeStyle,
-      fontSize: '10px', padding: '2px 8px', borderRadius: '999px',
-      fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px',
-    }}>
-      {meta.icon} {meta.label}
+    <span className="admin-ticket-chip" style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
+      <IconComp size={11} /> {meta.label}
     </span>
   );
 }
 
 function ScopeBadge({ scope }) {
   const meta = SCOPE_META[scope] || SCOPE_META.COMMON_AREA;
+  const IconComp = meta.icon;
   return (
-    <span style={{
-      ...meta.badgeStyle,
-      fontSize: '10px', padding: '2px 8px', borderRadius: '999px',
-      fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px',
-    }}>
-      {meta.icon} {meta.label}
+    <span className="admin-ticket-chip" style={{ background: meta.bg, color: meta.color, border: `1px solid ${meta.border}` }}>
+      <IconComp size={11} /> {meta.label}
+    </span>
+  );
+}
+
+function StatusBadge({ status }) {
+  if (status === 'open') {
+    return (
+      <span className="admin-status-badge status-open">
+        <span className="admin-status-dot dot-open" /> Open
+      </span>
+    );
+  }
+  if (status === 'in_progress') {
+    return (
+      <span className="admin-status-badge status-in-progress">
+        <span className="admin-status-dot dot-in-progress" /> In Progress
+      </span>
+    );
+  }
+  if (status === 'resolved') {
+    return (
+      <span className="admin-status-badge status-resolved">
+        <CheckCircle2 size={12} /> Resolved
+      </span>
+    );
+  }
+  return (
+    <span className="admin-status-badge status-dismissed">
+      <XCircle size={12} /> Dismissed
     </span>
   );
 }
 
 export default function ComplaintManagement({
-  complaints,
+  complaints = [],
   isLoadingComplaints,
   complaintStatusFilter,
   setComplaintStatusFilter,
@@ -84,52 +139,125 @@ export default function ComplaintManagement({
   fetchComplaints,
   updateComplaintStatus,
   updatingComplaintId,
+  deleteComplaint,
+  deletingComplaintId,
   formatDate,
 }) {
-  const selectStyle = {
-    padding: 'var(--space-2)',
-    borderRadius: 'var(--radius-md)',
-    background: 'var(--cm-bg)',
-    color: 'var(--cm-fg)',
-    border: '1px solid var(--cm-border)',
-    fontSize: 'var(--text-xs)',
+  const [complaintToDelete, setComplaintToDelete] = useState(null);
+
+  // Status counts for quick filter buttons
+  const counts = useMemo(() => {
+    return {
+      all: complaints.length,
+      open: complaints.filter((c) => c.status === 'open').length,
+      in_progress: complaints.filter((c) => c.status === 'in_progress').length,
+      resolved: complaints.filter((c) => c.status === 'resolved').length,
+      dismissed: complaints.filter((c) => c.status === 'dismissed').length,
+    };
+  }, [complaints]);
+
+  const handleFilterChange = (statusVal, catVal, roleVal, scopeVal) => {
+    fetchComplaints(statusVal, catVal, roleVal, scopeVal);
+  };
+
+  const confirmDeleteComplaint = async () => {
+    if (!complaintToDelete || !deleteComplaint) return;
+    await deleteComplaint(complaintToDelete.id);
+    setComplaintToDelete(null);
   };
 
   return (
     <div className="admin-tab-content">
-      <Card>
+      {/* Permanent Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={Boolean(complaintToDelete)}
+        onOpenChange={(open) => {
+          if (!open) setComplaintToDelete(null);
+        }}
+        title="Permanently Delete Complaint Ticket?"
+        description={`Are you sure you want to permanently delete ticket '${complaintToDelete?.title}' submitted by ${complaintToDelete?.student_name}? This action cannot be undone.`}
+        confirmLabel="Delete Ticket"
+        variant="destructive"
+        isLoading={Boolean(deletingComplaintId)}
+        onConfirm={confirmDeleteComplaint}
+      />
+
+      {/* ── Status Quick Filter Bar ── */}
+      <div className="admin-complaints-status-bar">
+        <button
+          className={`admin-status-tab ${complaintStatusFilter === '' ? 'active' : ''}`}
+          onClick={() => {
+            setComplaintStatusFilter('');
+            handleFilterChange('', complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter);
+          }}
+        >
+          All Tickets <span className="admin-status-tab-count">{counts.all}</span>
+        </button>
+
+        <button
+          className={`admin-status-tab ${complaintStatusFilter === 'open' ? 'active' : ''}`}
+          onClick={() => {
+            setComplaintStatusFilter('open');
+            handleFilterChange('open', complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter);
+          }}
+        >
+          <span className="admin-status-dot dot-open" /> Open
+          {counts.open > 0 && <span className="admin-status-tab-count count-open">{counts.open}</span>}
+        </button>
+
+        <button
+          className={`admin-status-tab ${complaintStatusFilter === 'in_progress' ? 'active' : ''}`}
+          onClick={() => {
+            setComplaintStatusFilter('in_progress');
+            handleFilterChange('in_progress', complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter);
+          }}
+        >
+          <span className="admin-status-dot dot-in-progress" /> In Progress
+          {counts.in_progress > 0 && <span className="admin-status-tab-count count-in-progress">{counts.in_progress}</span>}
+        </button>
+
+        <button
+          className={`admin-status-tab ${complaintStatusFilter === 'resolved' ? 'active' : ''}`}
+          onClick={() => {
+            setComplaintStatusFilter('resolved');
+            handleFilterChange('resolved', complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter);
+          }}
+        >
+          <CheckCircle2 size={13} className="text-emerald-400" /> Resolved
+          {counts.resolved > 0 && <span className="admin-status-tab-count count-resolved">{counts.resolved}</span>}
+        </button>
+
+        <button
+          className={`admin-status-tab ${complaintStatusFilter === 'dismissed' ? 'active' : ''}`}
+          onClick={() => {
+            setComplaintStatusFilter('dismissed');
+            handleFilterChange('dismissed', complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter);
+          }}
+        >
+          <XCircle size={13} className="text-slate-400" /> Dismissed
+          {counts.dismissed > 0 && <span className="admin-status-tab-count">{counts.dismissed}</span>}
+        </button>
+      </div>
+
+      <Card style={{ marginTop: 'var(--space-4)' }}>
         <CardHeader style={{ display: 'flex', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
           <div>
             <CardTitle style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-              <AlertCircle className="cm-icon-md text-[var(--cm-accent)]" /> Student Complaints ({complaints.length})
+              <AlertCircle className="cm-icon-md text-[var(--cm-accent)]" /> Student Complaints & Maintenance Tickets
             </CardTitle>
-            <CardDescription>View, route, and update ticket statuses across campus departments.</CardDescription>
+            <CardDescription>
+              Triage, route to ground staff, and manage complaint lifecycle statuses across all campus hostels and facilities.
+            </CardDescription>
           </div>
 
           <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap', alignItems: 'center' }}>
-            {/* Status filter */}
-            <select
-              style={selectStyle}
-              value={complaintStatusFilter}
-              onChange={(e) => {
-                setComplaintStatusFilter(e.target.value);
-                fetchComplaints(e.target.value, complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter);
-              }}
-            >
-              <option value="">All Statuses</option>
-              <option value="open">Open</option>
-              <option value="in_progress">In Progress</option>
-              <option value="resolved">Resolved</option>
-              <option value="dismissed">Dismissed</option>
-            </select>
-
             {/* Category filter */}
             <select
-              style={selectStyle}
+              className="admin-filter-select"
               value={complaintCategoryFilter}
               onChange={(e) => {
                 setComplaintCategoryFilter(e.target.value);
-                fetchComplaints(complaintStatusFilter, e.target.value, complaintStaffRoleFilter, complaintScopeFilter);
+                handleFilterChange(complaintStatusFilter, e.target.value, complaintStaffRoleFilter, complaintScopeFilter);
               }}
             >
               <option value="">All Categories</option>
@@ -144,129 +272,287 @@ export default function ComplaintManagement({
 
             {/* Staff role filter */}
             <select
-              style={selectStyle}
+              className="admin-filter-select"
               value={complaintStaffRoleFilter}
               onChange={(e) => {
                 setComplaintStaffRoleFilter(e.target.value);
-                fetchComplaints(complaintStatusFilter, complaintCategoryFilter, e.target.value, complaintScopeFilter);
+                handleFilterChange(complaintStatusFilter, complaintCategoryFilter, e.target.value, complaintScopeFilter);
               }}
             >
               <option value="">All Staff Roles</option>
               <option value="electrical">⚡ Electrical</option>
-              <option value="cleaning">🧹 Cleaning</option>
+              <option value="cleaning">🧹 Cleaning Staff</option>
               <option value="maintenance">🛠️ Maintenance</option>
               <option value="mess_manager">🍽️ Mess Manager</option>
-              <option value="watchmen">🔒 Watchmen</option>
+              <option value="watchmen">🔒 Security Staff</option>
             </select>
 
             {/* Scope filter */}
             <select
-              style={selectStyle}
+              className="admin-filter-select"
               value={complaintScopeFilter}
               onChange={(e) => {
                 setComplaintScopeFilter(e.target.value);
-                fetchComplaints(complaintStatusFilter, complaintCategoryFilter, complaintStaffRoleFilter, e.target.value);
+                handleFilterChange(complaintStatusFilter, complaintCategoryFilter, complaintStaffRoleFilter, e.target.value);
               }}
             >
               <option value="">All Scopes</option>
               <option value="MESS">🍽️ Mess Scope</option>
-              <option value="ROOM_SHARED">👥 Room Shared</option>
-              <option value="ROOM_INDIVIDUAL">👤 Individual Item</option>
-              <option value="COMMON_AREA">🏢 Common Area</option>
+              <option value="ROOM_SHARED">👥 Room Shared Fixture</option>
+              <option value="ROOM_INDIVIDUAL">👤 Personal Room Item</option>
+              <option value="COMMON_AREA">🏢 Common / Floor Area</option>
             </select>
 
-            <Button variant="ghost" size="sm" onClick={() => fetchComplaints(complaintStatusFilter, complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter)}>
-              <RefreshCw className="cm-icon-sm mr-1" /> Refresh
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => handleFilterChange(complaintStatusFilter, complaintCategoryFilter, complaintStaffRoleFilter, complaintScopeFilter)}
+              disabled={isLoadingComplaints}
+            >
+              <RefreshCw className={`cm-icon-sm mr-1 ${isLoadingComplaints ? 'animate-spin' : ''}`} /> Refresh
             </Button>
           </div>
         </CardHeader>
 
         <CardContent>
           {isLoadingComplaints ? (
-            <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: 'var(--cm-muted)' }}>
-              <RefreshCw className="animate-spin cm-icon-md mx-auto mb-2" /> Loading complaints...
+            <div className="admin-empty-state">
+              <RefreshCw className="animate-spin cm-icon-lg mx-auto mb-3 text-[var(--cm-accent)]" />
+              <p style={{ fontWeight: 500 }}>Loading complaint tickets...</p>
             </div>
           ) : complaints.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: 'var(--space-6)', color: 'var(--cm-muted)' }}>
-              No complaints match the current filters.
+            <div className="admin-empty-state">
+              <CheckCircle2 className="cm-icon-xl mx-auto mb-3 text-emerald-400" />
+              <p style={{ fontWeight: 600, fontSize: '15px' }}>No complaints found</p>
+              <p style={{ fontSize: 'var(--text-xs)', color: 'var(--cm-muted)', marginTop: '4px' }}>
+                There are no complaints matching the selected filter criteria.
+              </p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
-              {complaints.map((c) => (
-                <Card key={c.id} style={{ background: 'var(--cm-bg)', border: '1px solid var(--cm-border)' }}>
-                  <CardContent className="p-6">
-                    {/* Header row */}
-                    <div className="admin-complaint-header-row">
-                      <div className="flex gap-3">
-                        <div className="text-2xl mt-1">{c.category_icon}</div>
-                        <div style={{ flex: 1 }}>
-                          <div className="font-semibold text-lg mb-1">{c.title}</div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--cm-muted)' }}>
-                            <Badge variant={c.status === 'open' ? 'destructive' : c.status === 'in_progress' ? 'warning' : c.status === 'resolved' ? 'success' : 'secondary'}>
-                              {c.status === 'open' ? 'Open' : c.status === 'in_progress' ? 'In Progress' : c.status === 'resolved' ? 'Resolved' : 'Dismissed'}
-                            </Badge>
+            <div className="admin-complaints-list">
+              {complaints.map((c) => {
+                const catMeta = CATEGORY_META[c.category] || CATEGORY_META.general;
+                const CatIcon = catMeta.icon;
+                const isUpdating = updatingComplaintId === c.id;
 
-                            {/* Staff role badge */}
+                return (
+                  <div key={c.id} className={`admin-ticket-card status-card-${c.status || 'open'}`}>
+                    {/* Header Row */}
+                    <div className="admin-ticket-header">
+                      <div className="admin-ticket-title-row">
+                        <div className="admin-ticket-cat-icon" style={{ background: catMeta.bg, color: catMeta.color }}>
+                          <CatIcon size={18} />
+                        </div>
+                        <div>
+                          <div className="admin-ticket-title">{c.title}</div>
+                          <div className="admin-ticket-chips-row">
+                            <StatusBadge status={c.status} />
                             <StaffRoleBadge role={c.staff_role} />
-
-                            {/* Scope badge */}
                             <ScopeBadge scope={c.scope} />
-
-                            <span className="flex items-center gap-1"><UserIcon className="cm-icon-xs" /> {c.student_name} ({c.scholar_id})</span>
-                            <span className="flex items-center gap-1"><Users className="cm-icon-xs" /> {c.vote_count} votes</span>
-                            <span>{formatDate(c.created_at)}</span>
+                            <span className="admin-ticket-time">
+                              <Clock size={11} /> {formatDate(c.created_at)}
+                            </span>
                           </div>
                         </div>
                       </div>
+
+                      {/* Vote Count Badge */}
+                      <div className="admin-ticket-votes-pill">
+                        <ThumbsUp size={12} />
+                        <span>{c.vote_count || 1} {c.vote_count === 1 ? 'vote' : 'votes'}</span>
+                      </div>
                     </div>
 
-                    {/* Location row */}
-                    {(c.hostel_id || c.room_number || c.mess_id) && (
-                      <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '12px', color: 'var(--cm-muted)' }}>
-                        {c.hostel_id && (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <Home size={12} /> Hostel Linked
-                          </span>
+                    {/* Student & Location Info Row */}
+                    <div className="admin-ticket-meta-strip">
+                      <div className="admin-ticket-meta-item">
+                        <User size={13} className="text-[var(--cm-muted)]" />
+                        <span style={{ fontWeight: 600, color: 'var(--cm-fg)' }}>{c.student_name || 'Student'}</span>
+                        {c.scholar_id && <span className="admin-ticket-subtle">({c.scholar_id})</span>}
+                      </div>
+
+                      {c.hostel_id && (
+                        <div className="admin-ticket-meta-item">
+                          <Home size={13} className="text-blue-400" />
+                          <span>Hostel Linked</span>
+                        </div>
+                      )}
+
+                      {c.room_number && (
+                        <div className="admin-ticket-meta-item">
+                          <DoorOpen size={13} className="text-purple-400" />
+                          <span>Room {c.room_number}</span>
+                        </div>
+                      )}
+
+                      {c.mess_id && (
+                        <div className="admin-ticket-meta-item">
+                          <UtensilsCrossed size={13} className="text-orange-400" />
+                          <span>{c.mess_id}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Complaint Description Body */}
+                    <div className="admin-ticket-description">
+                      {c.description}
+                    </div>
+
+                    {/* ── Structured Ticket Lifecycle Action Toolbar ── */}
+                    <div className="admin-ticket-footer">
+                      <div className="admin-ticket-id-tag">
+                        Ticket ID: <code>{c.id.slice(0, 8)}</code>
+                      </div>
+
+                      <div className="admin-ticket-actions-group">
+                        {/* ── Status Lifecycle: OPEN ── */}
+                        {c.status === 'open' && (
+                          <>
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => updateComplaintStatus(c.id, 'in_progress')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              title="Assign to ground staff and start resolution"
+                            >
+                              <ArrowRight size={13} style={{ marginRight: '4px' }} /> Start Progress
+                            </Button>
+                            <Button
+                              size="xs"
+                              onClick={() => updateComplaintStatus(c.id, 'resolved')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              style={{ background: '#10b981', color: '#fff' }}
+                            >
+                              <CheckCircle2 size={13} style={{ marginRight: '4px' }} /> Resolve
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => updateComplaintStatus(c.id, 'dismissed')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              style={{ color: 'var(--cm-muted)' }}
+                              title="Mark as invalid / rejected"
+                            >
+                              <XCircle size={13} style={{ marginRight: '4px' }} /> Dismiss
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => setComplaintToDelete(c)}
+                              style={{ color: 'var(--cm-error)' }}
+                              title="Permanently remove ticket from database"
+                            >
+                              <Trash2 size={13} style={{ marginRight: '4px' }} /> Delete
+                            </Button>
+                          </>
                         )}
-                        {c.room_number && (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            <DoorOpen size={12} /> Room {c.room_number}
-                          </span>
+
+                        {/* ── Status Lifecycle: IN PROGRESS ── */}
+                        {c.status === 'in_progress' && (
+                          <>
+                            <Button
+                              size="xs"
+                              onClick={() => updateComplaintStatus(c.id, 'resolved')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              style={{ background: '#10b981', color: '#fff' }}
+                            >
+                              <CheckCircle2 size={13} style={{ marginRight: '4px' }} /> Mark Resolved
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => updateComplaintStatus(c.id, 'open')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              style={{ color: 'var(--cm-muted)' }}
+                              title="Revert back to open queue"
+                            >
+                              <RotateCcw size={13} style={{ marginRight: '4px' }} /> Revert to Open
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => updateComplaintStatus(c.id, 'dismissed')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              style={{ color: 'var(--cm-muted)' }}
+                            >
+                              <XCircle size={13} style={{ marginRight: '4px' }} /> Dismiss
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => setComplaintToDelete(c)}
+                              style={{ color: 'var(--cm-error)' }}
+                            >
+                              <Trash2 size={13} style={{ marginRight: '4px' }} /> Delete
+                            </Button>
+                          </>
                         )}
-                        {c.mess_id && (
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            🍽️ {c.mess_id}
-                          </span>
+
+                        {/* ── Status Lifecycle: RESOLVED ── */}
+                        {c.status === 'resolved' && (
+                          <>
+                            <div className="admin-ticket-status-note text-emerald-400">
+                              <CheckCircle2 size={13} /> Issue Resolved
+                            </div>
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => updateComplaintStatus(c.id, 'in_progress')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              title="Reopen ticket if the issue recurred"
+                            >
+                              <RotateCcw size={13} style={{ marginRight: '4px' }} /> Reopen Ticket
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => setComplaintToDelete(c)}
+                              style={{ color: 'var(--cm-error)' }}
+                            >
+                              <Trash2 size={13} style={{ marginRight: '4px' }} /> Delete
+                            </Button>
+                          </>
+                        )}
+
+                        {/* ── Status Lifecycle: DISMISSED ── */}
+                        {c.status === 'dismissed' && (
+                          <>
+                            <div className="admin-ticket-status-note text-slate-400">
+                              <XCircle size={13} /> Ticket Dismissed / Rejected
+                            </div>
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              onClick={() => updateComplaintStatus(c.id, 'open')}
+                              isLoading={isUpdating}
+                              disabled={isUpdating}
+                              title="Reopen ticket into active queue"
+                            >
+                              <RotateCcw size={13} style={{ marginRight: '4px' }} /> Reopen Ticket
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => setComplaintToDelete(c)}
+                              style={{ color: 'var(--cm-error)' }}
+                              title="Permanently remove ticket"
+                            >
+                              <Trash2 size={13} style={{ marginRight: '4px' }} /> Delete
+                            </Button>
+                          </>
                         )}
                       </div>
-                    )}
-
-                    {/* Description */}
-                    <p className="mt-4 text-sm text-[var(--cm-fg)] leading-relaxed">
-                      {c.description}
-                    </p>
-
-                    {/* Actions */}
-                    <div style={{ marginTop: 'var(--space-4)', display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-2)' }}>
-                      {c.status !== 'in_progress' && (
-                        <Button size="xs" variant="secondary" onClick={() => updateComplaintStatus(c.id, 'in_progress')} isLoading={updatingComplaintId === c.id}>
-                          Mark In Progress
-                        </Button>
-                      )}
-                      {c.status !== 'resolved' && (
-                        <Button size="xs" onClick={() => updateComplaintStatus(c.id, 'resolved')} isLoading={updatingComplaintId === c.id}>
-                          Mark Resolved
-                        </Button>
-                      )}
-                      {c.status !== 'dismissed' && (
-                        <Button size="xs" variant="ghost" onClick={() => updateComplaintStatus(c.id, 'dismissed')} isLoading={updatingComplaintId === c.id} style={{ color: 'var(--cm-muted)' }}>
-                          Dismiss
-                        </Button>
-                      )}
                     </div>
-                  </CardContent>
-                </Card>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>

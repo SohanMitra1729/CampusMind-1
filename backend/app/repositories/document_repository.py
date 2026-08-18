@@ -15,25 +15,67 @@ def insert_documents_batch(rows: List[Dict[str, Any]]):
     supabase.table("documents").insert(rows).execute()
 
 
-def list_all_document_sources() -> Dict[str, int]:
+def list_all_document_sources() -> List[Dict[str, Any]]:
     """
-    Fetch all document metadata, count chunk frequencies grouped by filename,
-    and return a dictionary of { filename: chunk_count }.
+    Fetch all document metadata using pagination (handling > 1000 rows in Supabase),
+    group chunks by document, and return a list of enriched document objects.
     """
-    res = supabase.table("documents").select("metadata").execute()
-    docs: Dict[str, int] = {}
-    for row in (res.data or []):
+    all_rows: List[Dict[str, Any]] = []
+    page_size = 1000
+    start = 0
+
+    while True:
+        res = (
+            supabase.table("documents")
+            .select("metadata")
+            .range(start, start + page_size - 1)
+            .execute()
+        )
+        data = res.data or []
+        if not data:
+            break
+        all_rows.extend(data)
+        if len(data) < page_size:
+            break
+        start += page_size
+
+    docs: Dict[str, Dict[str, Any]] = {}
+    for row in all_rows:
         meta = row.get("metadata") or {}
-        src = meta.get("source")
-        if src:
-            filename = src.split("/")[-1].split("\\")[-1]
-            docs[filename] = docs.get(filename, 0) + 1
-    return dict(sorted(docs.items()))
+        fn = meta.get("filename") or meta.get("source")
+        if not fn:
+            continue
+        
+        filename = fn.split("/")[-1].split("\\")[-1]
+        if filename not in docs:
+            docs[filename] = {
+                "filename": filename,
+                "title": meta.get("title") or filename.replace(".pdf", ""),
+                "content_type": meta.get("content_type", "pdf"),
+                "category": meta.get("category", "general"),
+                "department": meta.get("department", "All Departments"),
+                "audience": meta.get("audience", "All Students"),
+                "description": meta.get("description", ""),
+                "chunks": 0,
+            }
+        docs[filename]["chunks"] += 1
+
+    return sorted(list(docs.values()), key=lambda x: x["filename"].lower())
 
 
 def delete_document_by_filename(filename: str):
-    """Delete all chunks matching a specific source PDF filename."""
-    supabase.table("documents").delete().like("metadata->source", f"%{filename}").execute()
+    """Delete all chunks matching a specific source PDF filename using JSONB arrow operators."""
+    try:
+        # Delete by filename key
+        supabase.table("documents").delete().eq("metadata->>filename", filename).execute()
+    except Exception as e:
+        print(f"[DocumentRepo] delete by metadata->>filename error: {e}")
+
+    try:
+        # Also clean up any chunks where source matches
+        supabase.table("documents").delete().eq("metadata->>source", filename).execute()
+    except Exception as e:
+        print(f"[DocumentRepo] delete by metadata->>source error: {e}")
 
 
 def find_hostel_allotment_chunk(scholar_id: str) -> Optional[Dict[str, Any]]:
