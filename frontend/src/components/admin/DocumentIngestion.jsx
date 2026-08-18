@@ -313,12 +313,14 @@ export default function DocumentIngestion({
                 <div className="admin-agent-report-field">
                   <span className="admin-agent-field-label">Notification Action</span>
                   <span className="admin-agent-field-val">
-                    {agentResult.notifications_sent > 0 ? (
-                      <span style={{ color: '#4ade80' }}>🎯 Dispatched to {agentResult.notifications_sent} student(s)</span>
-                    ) : agentResult.notification_skipped ? (
+                    {(agentResult.notifications_sent > 0 || agentResult.notified > 0) ? (
+                      <span style={{ color: '#4ade80' }}>
+                        {agentResult.is_broadcast !== false ? '🌐 Broadcasted to all students' : `🎯 Dispatched to ${agentResult.notifications_sent || agentResult.notified} student(s)`}
+                      </span>
+                    ) : (agentResult.notification_skipped || agentResult.skipped) ? (
                       <span style={{ color: 'var(--cm-muted)' }}>ℹ️ Reference Doc (No notification triggered)</span>
                     ) : (
-                      <span>📢 Broadcasted</span>
+                      <span style={{ color: '#60a5fa' }}>📢 Broadcasted to all students</span>
                     )}
                   </span>
                 </div>
@@ -369,8 +371,9 @@ export default function DocumentIngestion({
               </select>
             )}
 
-            <Button variant="ghost" size="sm" onClick={fetchDocuments} disabled={isLoadingDocs}>
-              <RefreshCw className={`cm-icon-sm mr-1 ${isLoadingDocs ? 'animate-spin' : ''}`} /> Refresh
+            {/* Refresh Button */}
+            <Button variant="ghost" size="sm" onClick={fetchDocuments} title="Reload knowledge base index">
+              <RefreshCw className="cm-icon-sm mr-1" /> Refresh
             </Button>
           </div>
         </CardHeader>
@@ -403,12 +406,12 @@ export default function DocumentIngestion({
               <table className="admin-table">
                 <thead>
                   <tr>
-                    <th>Document / Title</th>
-                    <th>Structure</th>
-                    <th>Category</th>
-                    <th>Target Audience</th>
-                    <th style={{ textAlign: 'center' }}>Vector Chunks</th>
-                    <th style={{ textAlign: 'right' }}>Actions</th>
+                    <th style={{ minWidth: '280px' }}>Document / Title</th>
+                    <th style={{ minWidth: '150px' }}>Structure</th>
+                    <th style={{ minWidth: '130px' }}>Category</th>
+                    <th style={{ minWidth: '160px' }}>Target Audience</th>
+                    <th style={{ minWidth: '130px', textAlign: 'center' }}>Vector Chunks</th>
+                    <th style={{ minWidth: '140px', textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>

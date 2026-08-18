@@ -157,7 +157,7 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
             all_texts    = [c["content"] for c in chunks]
             found_ids    = extract_scholar_ids(all_texts)
             is_broadcast = len(found_ids) == 0
-            clean_title  = filename.replace(".pdf", "").strip()
+            clean_title  = filename.replace(".pdf", "").replace("_", " ").strip()
             notif_msg    = summary if summary and summary != filename else f"New {doc_type.replace('_', ' ')}: {clean_title}"
             users        = get_all_students() if is_broadcast else resolve_scholar_ids(found_ids)
 
@@ -175,9 +175,14 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
                 notice_row["id"], users, clean_title, notif_msg, doc_type=doc_type
             )
             agent_result["notified"] = sent
+            agent_result["notifications_sent"] = sent
+            agent_result["is_broadcast"] = is_broadcast
+            agent_result["skipped"] = False
+            agent_result["notification_skipped"] = False
             logger.info(f"[NoticeService] Notifications dispatched: {sent}")
         else:
             agent_result["skipped"] = True
+            agent_result["notification_skipped"] = True
             logger.info(f"[NoticeService] doc_type='{doc_type}' → no notification needed")
 
     except Exception as agent_err:
