@@ -502,10 +502,59 @@
   color: #c084fc;
   border: 1px solid rgba(168, 85, 247, 0.3);
   display: inline-block;
+  white-space: nowrap;
+}
+
+/* ── Universal Admin Table Layout ── */
+.admin-table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-md);
+  margin-top: var(--space-2);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+  text-align: left;
+}
+
+.admin-table thead tr {
+  border-bottom: 1px solid var(--cm-border);
+}
+
+.admin-table th {
+  padding: 14px 18px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--cm-muted);
+  border-bottom: 1px solid var(--cm-border);
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.admin-table td {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--cm-border);
+  vertical-align: middle;
+  color: var(--cm-fg);
+}
+
+.admin-table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+.admin-table tbody tr:hover td {
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .admin-table-row-hover:hover td {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* ── Complaints Status Bar ── */

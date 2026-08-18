@@ -25,6 +25,7 @@ NOTIFY_TYPES = {
     "scholarship",
     "internship",
     "event_notice",
+    "general",
 }
 
 NOTICE_ICONS = {
