@@ -39,12 +39,18 @@ def get_user_chats(user_id: str) -> List[Dict[str, Any]]:
 
 
 def delete_chat(chat_id: str, user_id: str) -> bool:
-    """Delete a chat session if it belongs to the user. Returns True if deleted."""
+    """Delete a chat session and all its associated messages."""
     chat = get_chat_by_id_and_user(chat_id, user_id)
     if not chat:
         return False
-    supabase.table("chats").delete().eq("id", chat_id).execute()
-    return True
+    try:
+        # Cascade delete child messages first
+        supabase.table("messages").delete().eq("chat_id", chat_id).execute()
+    except Exception as e:
+        print(f"[ChatRepo] delete messages error for chat {chat_id}: {e}")
+
+    res = supabase.table("chats").delete().eq("id", chat_id).execute()
+    return bool(res.data)
 
 
 def add_message(chat_id: str, role: str, content: str) -> Dict[str, Any]:
