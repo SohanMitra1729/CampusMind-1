@@ -43,6 +43,8 @@ MIN_ROW_CELLS = 2
 
 # ── 1. Content-type detection ─────────────────────────────────────────────────
 
+import gc
+
 def detect_content_type(pdf_path: str) -> str:
     """Check if PDF contains tabular pages (e.g. result sheets, fee tables, allotments)."""
     try:
@@ -51,22 +53,28 @@ def detect_content_type(pdf_path: str) -> str:
             total = len(pdf.pages)
             if total == 0:
                 return "text"
+            # Sample up to first 10 pages only to save RAM and time
+            sample_count = min(10, total)
             tabular_pages = 0
-            for page in pdf.pages:
-                tables = page.extract_tables()
-                if tables:
-                    for table in tables:
-                        if any(
-                            len([c for c in row if c and str(c).strip()]) >= MIN_ROW_CELLS
-                            for row in table
-                        ):
-                            tabular_pages += 1
-                            break
-            ratio = tabular_pages / total
+            for i in range(sample_count):
+                page = pdf.pages[i]
+                try:
+                    tables = page.extract_tables()
+                    if tables:
+                        for table in tables:
+                            if any(
+                                len([c for c in row if c and str(c).strip()]) >= MIN_ROW_CELLS
+                                for row in table
+                            ):
+                                tabular_pages += 1
+                                break
+                finally:
+                    page.flush_cache()
+            ratio = tabular_pages / sample_count
             content_type = "tabular" if ratio >= TABULAR_PAGE_THRESHOLD else "text"
             print(
                 f"[PDF Processor] {Path(pdf_path).name}: "
-                f"{tabular_pages}/{total} tabular pages -> '{content_type}'"
+                f"{tabular_pages}/{sample_count} sample tabular pages -> '{content_type}'"
             )
             return content_type
 
@@ -145,7 +153,7 @@ def _row_to_sentence(
 
 
 def process_tabular_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]:
-    """Extract structured tables row by row using pdfplumber."""
+    """Extract structured tables page-by-page using pdfplumber with memory flushing."""
     import pdfplumber
 
     doc_title = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
@@ -153,56 +161,64 @@ def process_tabular_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]
 
     try:
         with pdfplumber.open(pdf_path) as pdf:
-            for page_num, page in enumerate(pdf.pages, start=1):
-                tables = page.extract_tables()
-                if not tables:
-                    continue
-
-                for table in tables:
-                    if not table or len(table) < 2:
+            total_pages = len(pdf.pages)
+            for page_num in range(1, total_pages + 1):
+                page = pdf.pages[page_num - 1]
+                try:
+                    tables = page.extract_tables()
+                    if not tables:
                         continue
 
-                    header_rows: List[List[Optional[str]]] = []
-                    data_start = 0
-
-                    for i, row in enumerate(table):
-                        non_empty = [c for c in row if c and str(c).strip()]
-                        if len(non_empty) >= MIN_ROW_CELLS:
-                            header_rows.append(row)
-                            data_start = i + 1
-                            if i > 0 and not any(
-                                str(c).isdigit() for c in non_empty if c
-                            ):
-                                pass
-                            else:
-                                break
-
-                    headers = _flatten_headers(header_rows)
-
-                    for row_idx, row in enumerate(
-                        table[data_start:], start=data_start + 1
-                    ):
-                        if not any(c and str(c).strip() for c in row):
+                    for table in tables:
+                        if not table or len(table) < 2:
                             continue
 
-                        sentence = _row_to_sentence(row, headers, doc_title)
-                        if not sentence:
-                            continue
+                        header_rows: List[List[Optional[str]]] = []
+                        data_start = 0
 
-                        meta: Dict[str, Any] = {
-                            "source": source_name,
-                            "content_type": "tabular",
-                            "page": page_num,
-                            "row": row_idx,
-                        }
+                        for i, row in enumerate(table):
+                            non_empty = [c for c in row if c and str(c).strip()]
+                            if len(non_empty) >= MIN_ROW_CELLS:
+                                header_rows.append(row)
+                                data_start = i + 1
+                                if i > 0 and not any(
+                                    str(c).isdigit() for c in non_empty if c
+                                ):
+                                    pass
+                                else:
+                                    break
 
-                        regn = re.search(r"\b(\d{7})\b", sentence)
-                        if regn:
-                            meta["regn_no"] = regn.group(1)
+                        headers = _flatten_headers(header_rows)
 
-                        all_chunks.append(
-                            {"content": sentence, "metadata": meta}
-                        )
+                        for row_idx, row in enumerate(
+                            table[data_start:], start=data_start + 1
+                        ):
+                            if not any(c and str(c).strip() for c in row):
+                                continue
+
+                            sentence = _row_to_sentence(row, headers, doc_title)
+                            if not sentence:
+                                continue
+
+                            meta: Dict[str, Any] = {
+                                "source": source_name,
+                                "content_type": "tabular",
+                                "page": page_num,
+                                "row": row_idx,
+                            }
+
+                            regn = re.search(r"\b(\d{7})\b", sentence)
+                            if regn:
+                                meta["regn_no"] = regn.group(1)
+
+                            all_chunks.append(
+                                {"content": sentence, "metadata": meta}
+                            )
+                finally:
+                    # Explicitly release page layout memory
+                    page.flush_cache()
+                    if page_num % 10 == 0:
+                        gc.collect()
 
     except Exception as e:
         print(f"[PDF Processor] pdfplumber error: {e} -- falling back to text mode.")
@@ -219,6 +235,7 @@ def process_tabular_pdf(pdf_path: str, source_name: str) -> List[Dict[str, Any]]
         except Exception as e:
             print(f"[PDF Processor] Text fallback error: {e}")
 
+    gc.collect()
     return all_chunks
 
 

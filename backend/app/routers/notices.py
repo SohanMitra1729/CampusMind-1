@@ -68,7 +68,22 @@ async def view_pdf_document(filename: str):
       2. If not found on local disk (e.g. on Render with ephemeral disk),
          streams directly from Supabase Cloud Storage.
     """
-    # 1. Check local cache
+    # 1. Fetch from Supabase Cloud Storage (Primary source of truth for Render & Cloud)
+    try:
+        pdf_bytes = supabase.storage.from_("campus-documents").download(filename)
+        if pdf_bytes:
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f"inline; filename=\"{filename}\"",
+                    "Cache-Control": "public, max-age=86400",
+                },
+            )
+    except Exception as e:
+        logger.warning(f"[Notices] Supabase storage download error for '{filename}': {e}")
+
+    # 2. Check local cache fallback
     file_path = PDF_DIR / filename
     if not file_path.exists():
         alt_path = Path("data/pdfs") / filename
@@ -84,21 +99,6 @@ async def view_pdf_document(filename: str):
                 "Cache-Control": "public, max-age=86400",
             },
         )
-
-    # 2. Fetch from Supabase Cloud Storage (permanent persistence on Render)
-    try:
-        pdf_bytes = supabase.storage.from_("campus-documents").download(filename)
-        if pdf_bytes:
-            return Response(
-                content=pdf_bytes,
-                media_type="application/pdf",
-                headers={
-                    "Content-Disposition": f"inline; filename=\"{filename}\"",
-                    "Cache-Control": "public, max-age=86400",
-                },
-            )
-    except Exception as e:
-        logger.warning(f"[Notices] Supabase storage download error for '{filename}': {e}")
 
     raise NotFoundException(f"Document '{filename}' not found.")
 
