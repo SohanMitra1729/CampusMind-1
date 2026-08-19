@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bell, Calendar, Info, Megaphone, FileText, ExternalLink, Download } from 'lucide-react';
+import { Bell, Calendar, Megaphone, FileText, ExternalLink } from 'lucide-react';
 import { Dialog, DialogHeader, DialogTitle, DialogDescription, DialogClose } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { API_BASE_URL } from '../../api/client';

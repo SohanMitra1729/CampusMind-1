@@ -3,15 +3,26 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Shield, ArrowLeft, Megaphone, AlertCircle, Database } from 'lucide-react';
+import { Shield, ArrowLeft, Megaphone, AlertCircle, Database, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../components/ui/Button';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import DocumentIngestion from '../components/admin/DocumentIngestion';
 import NoticeBroadcast from '../components/admin/NoticeBroadcast';
 import ComplaintManagement from '../components/admin/ComplaintManagement';
+import KnowledgeInsights from '../components/admin/KnowledgeInsights';
 import { useAdminComplaints } from '../hooks/useAdminComplaints';
-import { uploadDocumentApi, getDocumentsApi, deleteDocumentApi, postNoticeApi, getNoticesListApi, deleteNoticeApi } from '../api/notices';
+import {
+  uploadDocumentApi,
+  getDocumentsApi,
+  deleteDocumentApi,
+  postNoticeApi,
+  getNoticesListApi,
+  deleteNoticeApi,
+  getKnowledgeGapsApi,
+  approveKnowledgeGapApi,
+  dismissKnowledgeGapApi,
+} from '../api/notices';
 
 const NOTICE_TYPE_LABELS = {
   holiday:        { label: 'Holiday',        icon: '🏖️', color: 'emerald' },
@@ -49,6 +60,10 @@ export default function AdminPage({ onBack }) {
   const [isLoadingNotices, setIsLoadingNotices] = useState(false);
   const [noticeToDelete, setNoticeToDelete] = useState(null);
   const [isDeletingNotice, setIsDeletingNotice] = useState(false);
+
+  // ── Knowledge Gaps / Insights state ──
+  const [gaps, setGaps] = useState([]);
+  const [isLoadingGaps, setIsLoadingGaps] = useState(false);
 
   // ── Complaints (via hook) ──
   const {
@@ -96,6 +111,18 @@ export default function AdminPage({ onBack }) {
     }
   }, []);
 
+  const fetchGaps = useCallback(async () => {
+    setIsLoadingGaps(true);
+    try {
+      const data = await getKnowledgeGapsApi();
+      setGaps(data || []);
+    } catch (e) {
+      console.error('Failed to load knowledge gaps', e);
+    } finally {
+      setIsLoadingGaps(false);
+    }
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     const loadAdminData = async () => {
@@ -103,11 +130,12 @@ export default function AdminPage({ onBack }) {
         await fetchDocuments();
         await fetchPostedNotices();
         await fetchComplaints();
+        await fetchGaps();
       }
     };
     loadAdminData();
     return () => { isMounted = false; };
-  }, [fetchDocuments, fetchPostedNotices, fetchComplaints]);
+  }, [fetchDocuments, fetchPostedNotices, fetchComplaints, fetchGaps]);
 
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
@@ -163,13 +191,8 @@ export default function AdminPage({ onBack }) {
       setUploadAlert({ type: 'success', text: msg });
       toast.success(msg);
 
-      if (data) {
-        setAgentResult({
-          filename: selectedFile.name,
-          contentType: data.content_type_detected,
-          chunksCreated: data.chunks_created,
-          ...(data.agent || {}),
-        });
+      if (data.agent) {
+        setAgentResult(data.agent);
       }
 
       setSelectedFile(null);
@@ -227,7 +250,6 @@ export default function AdminPage({ onBack }) {
       setNoticeTitle('');
       setNoticeContent('');
       fetchPostedNotices();
-      fetchDocuments();
     } catch (err) {
       setNoticeAlert({ type: 'error', text: err.message });
       toast.error(err.message || 'Failed to broadcast notice.');
@@ -241,15 +263,26 @@ export default function AdminPage({ onBack }) {
     setIsDeletingNotice(true);
     try {
       await deleteNoticeApi(noticeToDelete.id);
-      toast.success(`Deleted notice '${noticeToDelete.title}'.`);
+      toast.success(`Deleted notice "${noticeToDelete.title}".`);
       setNoticeToDelete(null);
       fetchPostedNotices();
-      fetchDocuments();
     } catch (err) {
       toast.error(err.message || 'Failed to delete notice.');
     } finally {
       setIsDeletingNotice(false);
     }
+  };
+
+  const handleApproveGap = async (gapId, answer, question) => {
+    await approveKnowledgeGapApi(gapId, answer, question);
+    fetchGaps();
+    fetchDocuments();
+    fetchPostedNotices();
+  };
+
+  const handleDismissGap = async (gapId) => {
+    await dismissKnowledgeGapApi(gapId);
+    fetchGaps();
   };
 
   const formatDate = (iso) => {
@@ -309,6 +342,12 @@ export default function AdminPage({ onBack }) {
             <button className={`admin-tab-item ${activeTab === 'notice' ? 'active' : ''}`} onClick={() => setActiveTab('notice')}>
               <Megaphone className="cm-icon-sm" /> Broadcasts
             </button>
+            <button className={`admin-tab-item ${activeTab === 'insights' ? 'active' : ''}`} onClick={() => { setActiveTab('insights'); fetchGaps(); }}>
+              <Sparkles className="cm-icon-sm" /> Insights
+              {gaps.length > 0 && (
+                <span className="admin-tab-badge" style={{ background: '#f59e0b', color: '#1e293b' }}>{gaps.length}</span>
+              )}
+            </button>
             <button className={`admin-tab-item ${activeTab === 'complaints' ? 'active' : ''}`} onClick={() => { setActiveTab('complaints'); fetchComplaints(complaintStatusFilter, complaintCategoryFilter); }}>
               <AlertCircle className="cm-icon-sm" /> Complaints
               {complaints.filter(c => c.status === 'open').length > 0 && (
@@ -353,6 +392,16 @@ export default function AdminPage({ onBack }) {
               onDeleteNotice={(n) => setNoticeToDelete(n)}
               formatDate={formatDate}
               NOTICE_TYPE_LABELS={NOTICE_TYPE_LABELS}
+            />
+          )}
+
+          {activeTab === 'insights' && (
+            <KnowledgeInsights
+              gaps={gaps}
+              isLoadingGaps={isLoadingGaps}
+              fetchGaps={fetchGaps}
+              onApproveGap={handleApproveGap}
+              onDismissGap={handleDismissGap}
             />
           )}
 

@@ -21,6 +21,7 @@ from app.db.supabase import supabase
 import app.repositories.document_repository as doc_repo
 import app.repositories.complaint_repository as complaint_repo
 import app.repositories.notice_repository as notice_repo
+import app.services.memory_service as memory_service
 
 supabase_url = settings.SUPABASE_URL
 supabase_key = settings.SUPABASE_SERVICE_KEY
@@ -69,7 +70,7 @@ async def retrieve_context(query: str, metadata_filter: Optional[Dict[str, Any]]
             filter_metadata=metadata_filter
         )
 
-        MIN_SCORE = 0.005
+        MIN_SCORE = 0.018
         scored = [c for c in candidates if (c.get("similarity") or 0) >= MIN_SCORE]
 
         seen_fingerprints: list[str] = []
@@ -120,6 +121,9 @@ def fetch_campus_hostels_context() -> str:
         ]
         for h in hostels:
             gender = (h.get("gender") or "Campus").capitalize()
+            batch  = h.get("target_years") or "All Batches"
+            desc   = h.get("sharing_description") or ""
+            mess   = h.get("mess_name") or "Hostel Mess"
             lines.append(f"• {h.get('name')} [{gender} | Batch: {batch} | Rooms: {desc} | Assigned Mess: {mess}]")
         return "\n" + "\n".join(lines) + "\n"
     except Exception as e:
@@ -168,11 +172,15 @@ def _build_system_instruction(
     user_context: str,
     hostels_context: str,
     notices_context: str = "",
+    student_memory: str = "",
+    summary_context: str = "",
 ) -> str:
     return f"""You are CampusMind, a dedicated AI assistant exclusively for campus and institutional matters at this university.
 {personal_context}
+{student_memory}
 {hostels_context}
 {notices_context}
+{summary_context}
 You have access to the following institutional document excerpts:
 
 {context_text}
@@ -202,30 +210,54 @@ you MUST respond with EXACTLY this message and nothing else:
 Do NOT attempt to answer general questions even if you know the answer from your training data.
 ════════════════════════════════════════════════
 
-Rules for campus-related responses:
+CRITICAL ANTI-HALLUCINATION & STRICT GROUNDING RULES:
+1. STRICT GROUNDING: You MUST base all factual campus answers, office hours, contact steps, and facility details strictly on the provided institutional document excerpts or official directories.
+2. DIRECTORY LIMITATION: Contact Directories (such as 'NITS Administration Directory' or 'Faculty Directory') contain ONLY staff names and phone numbers. They DO NOT provide procedural guidelines. NEVER use contact directories to make speculative guesses about processes, room bookings, or facilities (e.g., Guest House booking, Medical Record Book MRB, swimming pool rules, dispensary).
+3. NEVER INVENT PROCEDURES: If the document excerpts do NOT explicitly state the official process (e.g. how to book the campus guest house, how to collect Medical Record Book MRB, swimming pool facilities), DO NOT fabricate steps, fake hours (e.g., '8 AM to 6 PM'), or conversational guesses.
+4. NEVER OFFER IMPOSSIBLE ACTIONS: Never offer to perform offline administrative actions on behalf of the user (e.g. do NOT say 'I will forward your request to the hostel office/dispensary' or 'I can help draft an email').
+5. UNKNOWN CAMPUS INFORMATION: If the question IS campus-related but the specific facts or step-by-step procedures are NOT in the excerpts or official hostel list, you MUST strictly respond with:
+   "I don't have that specific information right now. Please check with the administration or the relevant department."
+
+General response rules:
 1. Answer directly and conversationally — never say phrases like "based on the context", "the document says", or "according to [any source/file name]". Speak as if you already know the information. Do NOT mention any file names, document names, or source names in your answer.
 2. If the user asks about hostel availability, boys hostels, girls hostels, room sharing, or messes — USE the [OFFICIAL CAMPUS HOSTELS & MESS DIRECTORY] above. It contains the complete, accurate ground-truth list.
 3. If the user asks about their own results, marks, SGPA, CGPA, or grades — use the [STUDENT'S OWN ACADEMIC RECORD] section above (if present). That record belongs specifically to this student.
 4. If the user asks about their own personal details (name, scholar ID, email), use the Active Logged-In Student info above.
 5. If the user asks HOW to submit, file, or give a complaint, or report an issue — ALWAYS inform them warmly that they can submit it RIGHT HERE with you in this chat! Invite them to describe their issue (e.g., "My room fan is broken", "Corridor light not working", "Mess food issue") and tell them you will file it for them immediately. NEVER tell them to use an external website, grievance cell, or offline form.
-6. If the question IS campus-related but the information is NOT present in the document excerpts or official directory, say: "I don't have that specific information right now. Please check with the administration or the relevant department."
-7. For casual greetings (hi, hello, hey), respond warmly and ask how you can help with campus-related queries.
-8. Tables & Markdown: Whenever formatting structured lists or tabular data (like marks, course grades, SGPA/CGPA, or hostel lists), format them as a valid Markdown Table with clear newlines between each row:
-| Course | Marks | Grade |
-| :--- | :--- | :--- |
-| CS 306 | 9 | AB |
-| CS 307 | 10 | AA |
-Ensure each row is on its own separate line with a standard newline (\\n). Never join rows on the same line.
+6. For casual greetings (hi, hello, hey), respond warmly and ask how you can help with campus-related queries.
+7. Tables & Markdown: Whenever formatting structured lists or tabular data (like marks, course grades, SGPA/CGPA, or hostel lists), format them as a valid Markdown Table with clear newlines between each row.
 """
+
+
+def _is_unanswered_fallback(text: str) -> bool:
+    """Detect if the generated response is a fallback/missing-info response (handles Unicode apostrophes)."""
+    if not text:
+        return False
+    normalized = text.lower().replace("’", "'").replace("‘", "'").replace("`", "'")
+    fallback_phrases = [
+        "don't have that specific information",
+        "don't have official information",
+        "don't have information",
+        "do not have that specific information",
+        "do not have official information",
+        "do not have information",
+        "check with the administration",
+        "campus assistant! i can only help",
+        "not available in my knowledge base",
+        "no specific information right now",
+    ]
+    return any(p in normalized for p in fallback_phrases)
 
 
 async def get_answer(
     query: str,
     metadata_filter: Optional[Dict[str, Any]] = None,
     user_info: Optional[Dict[str, Any]] = None,
-    chat_history: Optional[List[Dict[str, str]]] = None
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    chat_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run the RAG pipeline with smart retrieval and structured context."""
+    user_id = user_info.get("id") or user_info.get("user_id") if user_info else None
     scholar_id = user_info.get("scholar_id") if user_info else None
     personal_context = ""
 
@@ -241,7 +273,14 @@ async def get_answer(
     context_items = await retrieve_context(query, metadata_filter)
     hostels_context = fetch_campus_hostels_context()
     notices_context = fetch_recent_notices_context()
-    
+    student_memory = memory_service.get_student_memory_context(user_id)
+    summary_context, final_history = memory_service.get_compressed_chat_history(
+        chat_id or "default",
+        chat_history or [],
+    )
+
+    max_score = max((item.get("similarity") or 0) for item in context_items) if context_items else 0.0
+
     if context_items:
         context_parts = []
         for item in context_items:
@@ -268,13 +307,15 @@ async def get_answer(
         user_context=user_context,
         hostels_context=hostels_context,
         notices_context=notices_context,
+        student_memory=student_memory,
+        summary_context=summary_context,
     )
     
     try:
         messages = [{"role": "system", "content": system_instruction}]
         
-        if chat_history:
-            for msg in chat_history:
+        if final_history:
+            for msg in final_history:
                 role = "assistant" if msg["role"] == "bot" else "user"
                 messages.append({"role": role, "content": msg["content"]})
                 
@@ -287,14 +328,23 @@ async def get_answer(
             max_tokens=1024
         )
         answer = chat_completion.choices[0].message.content
+        if _is_unanswered_fallback(answer) or (max_score < 0.025 and not personal_context):
+            memory_service.record_unanswered_query(query, user_id=user_id, confidence=max_score)
+            filtered_metadata = []
+        else:
+            filtered_metadata = [
+                item["metadata"] for item in context_items if (item.get("similarity") or 0) >= 0.025
+            ]
+
     except Exception as e:
         print(f"[RAG] Generation error: {e}")
         answer = "Sorry, I encountered an error generating the response. Please try again."
+        filtered_metadata = []
 
     return {
         "answer": answer,
         "context": [item["content"] for item in context_items],
-        "metadata": [item["metadata"] for item in context_items]
+        "metadata": filtered_metadata,
     }
 
 
@@ -303,6 +353,7 @@ async def get_answer_stream(
     metadata_filter: Optional[Dict[str, Any]] = None,
     user_info: Optional[Dict[str, Any]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    chat_id: Optional[str] = None,
 ):
     """
     Async generator version of get_answer.
@@ -311,6 +362,7 @@ async def get_answer_stream(
     """
     import json as _json
 
+    user_id = user_info.get("id") or user_info.get("user_id") if user_info else None
     scholar_id = user_info.get("scholar_id") if user_info else None
     personal_context = ""
 
@@ -325,6 +377,13 @@ async def get_answer_stream(
     context_items = await retrieve_context(query, metadata_filter)
     hostels_context = fetch_campus_hostels_context()
     notices_context = fetch_recent_notices_context()
+    student_memory = memory_service.get_student_memory_context(user_id)
+    summary_context, final_history = memory_service.get_compressed_chat_history(
+        chat_id or "default",
+        chat_history or [],
+    )
+
+    max_score = max((item.get("similarity") or 0) for item in context_items) if context_items else 0.0
 
     if context_items:
         context_parts = []
@@ -352,16 +411,22 @@ async def get_answer_stream(
         user_context=user_context,
         hostels_context=hostels_context,
         notices_context=notices_context,
+        student_memory=student_memory,
+        summary_context=summary_context,
     )
 
     messages = [{"role": "system", "content": system_instruction}]
-    if chat_history:
-        for msg in chat_history:
+    if final_history:
+        for msg in final_history:
             role = "assistant" if msg["role"] == "bot" else "user"
             messages.append({"role": role, "content": msg["content"]})
     messages.append({"role": "user", "content": query})
 
-    sources = [item.get("metadata", {}) for item in context_items]
+    # Only include sources that have actual relevance score
+    sources = [
+        item.get("metadata", {}) for item in context_items if (item.get("similarity") or 0) >= 0.025
+    ]
+    accumulated_answer = []
 
     try:
         async for chunk in groq_pool.async_chat_completion_stream(
@@ -372,9 +437,19 @@ async def get_answer_stream(
         ):
             token = chunk.choices[0].delta.content or ""
             if token:
+                accumulated_answer.append(token)
                 yield f"data: {_json.dumps({'token': token})}\n\n"
+        
+        full_text = "".join(accumulated_answer)
+        if _is_unanswered_fallback(full_text) or (max_score < 0.025 and not personal_context):
+            memory_service.record_unanswered_query(query, user_id=user_id, confidence=max_score)
+        
+        if _is_unanswered_fallback(full_text):
+            sources = []  # Clear sources when answer is a fallback or out of scope
+
     except Exception as e:
         logger.error(f"[RAG] Streaming generation error: {e}")
+        sources = []
         yield f"data: {_json.dumps({'token': 'Sorry, I encountered an error. Please try again.'})}\n\n"
 
     # Final event with metadata
