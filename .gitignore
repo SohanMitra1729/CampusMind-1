@@ -36,7 +36,7 @@ campusmind_review.md
 
 # Data & Migrations
 data/
-supabase_migrations/
+supabase/
 scripts/
 
 
