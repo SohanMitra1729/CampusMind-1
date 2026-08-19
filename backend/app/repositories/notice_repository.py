@@ -85,13 +85,62 @@ def mark_all_notifications_read(user_id: str):
 
 
 def delete_notice_by_id(notice_id: str) -> bool:
-    """Delete a notice, its dispatched user notifications, and its pgvector chunks."""
+    """Delete a notice, its dispatched user notifications, its physical PDF (if any), and its pgvector chunks."""
     try:
-        # Delete user_notifications for this notice
+        # Fetch notice details first to know source_file and source_type
+        res = supabase.table("notices").select("*").eq("id", notice_id).execute()
+        notice = res.data[0] if (res.data and len(res.data) > 0) else None
+
+        source_file = notice.get("source_file") if notice else None
+        source_type = notice.get("source_type") if notice else "text"
+        title = notice.get("title") if notice else None
+
+        # 1. Delete user_notifications for this notice
         supabase.table("user_notifications").delete().eq("notice_id", notice_id).execute()
-        # Delete pgvector chunks for this notice
-        supabase.table("documents").delete().eq("metadata->>notice_id", notice_id).execute()
-        # Delete notice row
+
+        # 2. Delete pgvector chunks for this notice by notice_id / source_id
+        for field in ["notice_id", "source_id"]:
+            try:
+                supabase.table("documents").delete().eq(f"metadata->>{field}", notice_id).execute()
+            except Exception:
+                pass
+
+        # 3. If it was a PDF notice, delete all chunks, cloud storage file, and local cache
+        if source_file:
+            from pathlib import Path
+            clean_file = source_file.strip()
+            # Clean chunks in documents
+            for field in ["filename", "source", "file_name", "title", "source_file"]:
+                try:
+                    supabase.table("documents").delete().eq(f"metadata->>{field}", clean_file).execute()
+                except Exception:
+                    pass
+            # Remove from Supabase Storage
+            try:
+                supabase.storage.from_("campus-documents").remove([clean_file])
+            except Exception:
+                pass
+            # Remove from local disk
+            for base_path in [
+                Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs",
+                Path.cwd() / "data" / "pdfs",
+                Path.cwd().parent / "data" / "pdfs",
+            ]:
+                file_path = base_path / clean_file
+                if file_path.exists():
+                    try:
+                        file_path.unlink()
+                    except Exception:
+                        pass
+
+        # 4. If it was a text notice, also clean up by title
+        elif title and source_type == "text":
+            try:
+                supabase.table("documents").delete().eq("metadata->>source", title).execute()
+            except Exception:
+                pass
+
+        # 5. Delete notice row
         supabase.table("notices").delete().eq("id", notice_id).execute()
         return True
     except Exception as e:

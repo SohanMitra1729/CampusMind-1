@@ -32,6 +32,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional, BinaryIO
 
+from app.db.supabase import supabase
 from app.core.key_pool import gemini_pool
 import app.repositories.notice_repository as notice_repo
 import app.repositories.document_repository as doc_repo
@@ -208,27 +209,77 @@ def list_documents() -> List[Dict[str, Any]]:
 
 def delete_document(filename: str) -> Dict[str, Any]:
     """
-    Delete all RAG chunks for a PDF from pgvector, Supabase Cloud Storage, and local cache.
+    Completely cascade-delete an ingested document across the entire system:
+      1. Delete all RAG vector chunks from pgvector (documents table)
+      2. Find all parent notices in notices table matching this filename / title
+      3. For each matching notice, delete all student notifications (user_notifications table)
+      4. Delete matching notice rows from notices table
+      5. Remove the physical PDF from Supabase Storage CDN (campus-documents bucket)
+      6. Remove the PDF from local cache on disk (data/pdfs)
     """
-    doc_repo.delete_document_by_filename(filename)
+    clean_name = filename.strip()
+    base_name = clean_name.replace(".pdf", "").strip()
 
-    # Remove from Supabase Storage CDN
+    # 1. Delete all RAG chunks from documents table
     try:
-        supabase.storage.from_(BUCKET_NAME).remove([filename])
-        logger.info(f"[NoticeService] Removed '{filename}' from Supabase Storage.")
+        doc_repo.delete_document_by_filename(clean_name)
+    except Exception as e:
+        logger.warning(f"[NoticeService] Error deleting chunks for '{clean_name}': {e}")
+
+    # 2. Find and delete all corresponding notices and user_notifications
+    try:
+        res1 = supabase.table("notices").select("id").eq("source_file", clean_name).execute()
+        res2 = supabase.table("notices").select("id").eq("title", clean_name).execute()
+        res3 = supabase.table("notices").select("id").eq("title", base_name).execute()
+
+        notice_ids = list({
+            n["id"] for res in [res1, res2, res3] for n in (res.data or []) if n.get("id")
+        })
+
+        if notice_ids:
+            # Delete user notifications
+            supabase.table("user_notifications").delete().in_("notice_id", notice_ids).execute()
+            # Delete RAG chunks tied by notice_id
+            for nid in notice_ids:
+                try:
+                    supabase.table("documents").delete().eq("metadata->>notice_id", nid).execute()
+                    supabase.table("documents").delete().eq("metadata->>source_id", nid).execute()
+                except Exception:
+                    pass
+            # Delete notices
+            supabase.table("notices").delete().in_("id", notice_ids).execute()
+            logger.info(f"[NoticeService] Cascade deleted {len(notice_ids)} notices & user notifications for '{clean_name}'.")
+    except Exception as e:
+        logger.warning(f"[NoticeService] Error deleting notices/notifications for '{clean_name}': {e}")
+
+    # Fallback: Also clean up any user_notifications matching filename or title
+    try:
+        supabase.table("user_notifications").delete().ilike("notification_title", f"%{base_name}%").execute()
+    except Exception:
+        pass
+
+    # 3. Remove from Supabase Storage CDN
+    try:
+        supabase.storage.from_(BUCKET_NAME).remove([clean_name])
+        logger.info(f"[NoticeService] Removed '{clean_name}' from Supabase Storage.")
     except Exception as err:
-        logger.warning(f"[NoticeService] Could not remove '{filename}' from Supabase Storage: {err}")
+        logger.warning(f"[NoticeService] Could not remove '{clean_name}' from Supabase Storage: {err}")
 
-    # Remove from local cache
-    pdf_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs"
-    file_path = pdf_dir / filename
-    if file_path.exists():
-        try:
-            file_path.unlink()
-        except Exception:
-            pass
+    # 4. Remove from local cache
+    for base_path in [
+        Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs",
+        Path.cwd() / "data" / "pdfs",
+        Path.cwd().parent / "data" / "pdfs",
+    ]:
+        file_path = base_path / clean_name
+        if file_path.exists():
+            try:
+                file_path.unlink()
+                logger.info(f"[NoticeService] Deleted local PDF file '{file_path}'.")
+            except Exception as unlink_err:
+                logger.warning(f"[NoticeService] Could not unlink local PDF '{file_path}': {unlink_err}")
 
-    return {"message": f"Deleted document '{filename}' successfully."}
+    return {"message": f"Deleted document '{filename}' and all associated notifications successfully."}
 
 
 # ── Workflow B: Admin Text Notice ─────────────────────────────────────────────

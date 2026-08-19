@@ -65,17 +65,18 @@ def list_all_document_sources() -> List[Dict[str, Any]]:
 
 def delete_document_by_filename(filename: str):
     """Delete all chunks matching a specific source PDF filename using JSONB arrow operators."""
-    try:
-        # Delete by filename key
-        supabase.table("documents").delete().eq("metadata->>filename", filename).execute()
-    except Exception as e:
-        print(f"[DocumentRepo] delete by metadata->>filename error: {e}")
-
-    try:
-        # Also clean up any chunks where source matches
-        supabase.table("documents").delete().eq("metadata->>source", filename).execute()
-    except Exception as e:
-        print(f"[DocumentRepo] delete by metadata->>source error: {e}")
+    clean = filename.strip()
+    base = clean.replace(".pdf", "").strip()
+    for field in ["filename", "source", "file_name", "title", "source_file"]:
+        try:
+            supabase.table("documents").delete().eq(f"metadata->>{field}", clean).execute()
+        except Exception as e:
+            print(f"[DocumentRepo] delete by metadata->>{field} error: {e}")
+        if base != clean:
+            try:
+                supabase.table("documents").delete().eq(f"metadata->>{field}", base).execute()
+            except Exception:
+                pass
 
 
 def find_hostel_allotment_chunk(scholar_id: str) -> Optional[Dict[str, Any]]:
