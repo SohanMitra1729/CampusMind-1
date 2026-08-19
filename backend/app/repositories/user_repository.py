@@ -19,10 +19,28 @@ def get_profile_by_id(user_id: str) -> Optional[Dict[str, Any]]:
 
 def get_email_by_username(username: str) -> Optional[str]:
     """Resolve a username to its corresponding registered email address."""
-    res = supabase.table("profiles").select("email").eq("username", username).execute()
+    res = supabase.table("profiles").select("email").ilike("username", username.strip()).execute()
     if res.data:
         return res.data[0].get("email")
     return None
+
+
+def check_username_exists(username: str) -> bool:
+    """Check if a username is already taken in the profiles table."""
+    res = supabase.table("profiles").select("id").ilike("username", username.strip()).limit(1).execute()
+    return bool(res.data)
+
+
+def check_scholar_id_exists(scholar_id: str) -> bool:
+    """Check if a scholar_id is already registered in the profiles table."""
+    res = supabase.table("profiles").select("id").eq("scholar_id", scholar_id.strip()).limit(1).execute()
+    return bool(res.data)
+
+
+def check_email_exists(email: str) -> bool:
+    """Check if an email is already registered in the profiles table."""
+    res = supabase.table("profiles").select("id").ilike("email", email.strip()).limit(1).execute()
+    return bool(res.data)
 
 
 def get_profile_by_scholar_id(scholar_id: str) -> Optional[Dict[str, Any]]:
