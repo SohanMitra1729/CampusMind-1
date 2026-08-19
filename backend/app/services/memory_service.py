@@ -180,13 +180,12 @@ def get_compressed_chat_history(
     # Re-summarize if older turns grew significantly
     if not summary or len(older_messages) > 4:
         try:
-            client = groq_pool.get_client()
             prompt = (
                 f"Condense this earlier campus chat dialogue into a short 1-2 sentence context summary:\n\n"
                 f"{older_text}\n\n"
                 f"Summary:"
             )
-            resp = client.chat.completions.create(
+            resp = groq_pool.chat_completion(
                 model="llama-3.1-8b-instant",
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=80,
