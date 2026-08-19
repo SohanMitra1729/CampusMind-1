@@ -122,19 +122,24 @@ export default function Auth({ onAuthSuccess, initialResetToken = null }) {
             {(view === 'login' || view === 'signup' || view === 'forgot-password') && (
               <div className="auth-input-group">
                 <label className="auth-label">
-                  {view === 'signup' || view === 'forgot-password' ? 'Email Address' : 'Email or Username'}
+                  {view === 'signup' || view === 'forgot-password' ? 'Institute Email Address' : 'Email or Username'}
                 </label>
                 <div className="auth-input-wrapper">
                   <Mail className="auth-input-icon-left cm-icon-sm" />
                   <Input
                     type={view === 'login' ? 'text' : 'email'}
-                    placeholder={view === 'login' ? 'scholar_id@nits.ac.in or username' : 'name@nits.ac.in'}
+                    placeholder={view === 'login' ? 'username or name_ug_23@ece.nits.ac.in' : 'e.g. name_ug_23@ece.nits.ac.in'}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="auth-input-with-icon-left"
                     required
                   />
                 </div>
+                {view === 'signup' && (
+                  <span style={{ fontSize: '11px', color: 'var(--cm-muted)', marginTop: '4px', display: 'block' }}>
+                    Only official NIT Silchar emails (ending in <strong>.nits.ac.in</strong>) are permitted.
+                  </span>
+                )}
               </div>
             )}
 
