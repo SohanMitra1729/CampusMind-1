@@ -98,8 +98,8 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
     file_bytes = file_obj.read()
 
     # ── Upload to Supabase Cloud Storage (Permanent CDN) ──────────────────────
+    _ensure_storage_bucket()
     try:
-        _ensure_storage_bucket()
         supabase.storage.from_(BUCKET_NAME).upload(
             path=filename,
             file=file_bytes,
@@ -107,7 +107,15 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
         )
         logger.info(f"[NoticeService] Uploaded '{filename}' to Supabase Storage bucket '{BUCKET_NAME}'.")
     except Exception as storage_err:
-        logger.warning(f"[NoticeService] Supabase Storage upload warning: {storage_err}")
+        logger.warning(f"[NoticeService] Initial storage upload warning: {storage_err}")
+        # Verify if file was saved or exists in storage
+        try:
+            download_check = supabase.storage.from_(BUCKET_NAME).download(filename)
+            if not download_check:
+                raise storage_err
+        except Exception:
+            logger.error(f"[NoticeService] Failed to persist '{filename}' to Supabase Storage: {storage_err}")
+            raise RuntimeError(f"Could not save '{filename}' to Supabase Cloud Storage. Please check storage bucket permissions.")
 
     # ── Save temporary file for parsing ───────────────────────────────────────
     pdf_dir = Path(__file__).resolve().parent.parent.parent.parent / "data" / "pdfs"
@@ -117,31 +125,49 @@ async def upload_pdf(filename: str, file_obj: BinaryIO) -> Dict[str, Any]:
     with open(file_path, "wb") as buffer:
         buffer.write(file_bytes)
 
-    # ── Parse PDF → chunks ─────────────────────────────────────────────────────
-    chunks = process_pdf(str(file_path), source_name=filename)
-    if not chunks:
-        raise ValueError("No readable content extracted from PDF.")
+    # ── Parse PDF → chunks & Embed with Transactional Rollback ───────────────
+    import gc
+    try:
+        chunks = process_pdf(str(file_path), source_name=filename)
+        if not chunks:
+            raise ValueError("No readable content extracted from PDF.")
 
-    detected_type  = chunks[0]["metadata"].get("content_type", "text")
-    total_uploaded = 0
+        detected_type  = chunks[0]["metadata"].get("content_type", "text")
+        total_uploaded = 0
 
-    # ── Clear old chunks for this file (handles re-upload / updates) ───────────
-    doc_repo.delete_document_by_filename(filename)
-    logger.info(f"[NoticeService] Cleared existing chunks for '{filename}' before re-ingestion.")
+        # Clear old chunks for this file (handles re-upload / updates)
+        doc_repo.delete_document_by_filename(filename)
+        logger.info(f"[NoticeService] Cleared existing chunks for '{filename}' before re-ingestion.")
 
-    # ── Embed & store in batches ───────────────────────────────────────────────
-    for i in range(0, len(chunks), _BATCH_SIZE):
-        batch      = chunks[i : i + _BATCH_SIZE]
-        texts      = [c["content"] for c in batch]
-        embeddings = await _embed_with_retry(texts)
-        rows = [
-            {"content": c["content"], "metadata": c["metadata"], "embedding": emb}
-            for c, emb in zip(batch, embeddings)
-        ]
-        doc_repo.insert_documents_batch(rows)
-        total_uploaded += len(rows)
-        if i + _BATCH_SIZE < len(chunks):
-            await asyncio.sleep(_SLEEP_BETWEEN)
+        # Embed & store in rate-limit-safe, memory-safe batches
+        for i in range(0, len(chunks), _BATCH_SIZE):
+            batch      = chunks[i : i + _BATCH_SIZE]
+            texts      = [c["content"] for c in batch]
+            embeddings = await _embed_with_retry(texts)
+            rows = [
+                {"content": c["content"], "metadata": c["metadata"], "embedding": emb}
+                for c, emb in zip(batch, embeddings)
+            ]
+            doc_repo.insert_documents_batch(rows)
+            total_uploaded += len(rows)
+            gc.collect()
+            if i + _BATCH_SIZE < len(chunks):
+                await asyncio.sleep(_SLEEP_BETWEEN)
+
+    except Exception as process_err:
+        logger.error(f"[NoticeService] Ingestion failed for '{filename}', performing rollback: {process_err}")
+        # Rollback: Clean up any partial chunks from pgvector and storage
+        doc_repo.delete_document_by_filename(filename)
+        try:
+            supabase.storage.from_(BUCKET_NAME).remove([filename])
+        except Exception:
+            pass
+        if file_path.exists():
+            try:
+                file_path.unlink()
+            except Exception:
+                pass
+        raise process_err
 
     # ── Agentic layer: classify → extract → notify (non-fatal if it fails) ─────
     agent_result: Dict[str, Any] = {"notified": 0, "doc_type": "general", "skipped": False}
