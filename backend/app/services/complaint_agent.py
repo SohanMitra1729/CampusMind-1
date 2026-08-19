@@ -106,10 +106,14 @@ Examples:
             messages=[{"role": "user", "content": prompt}],
             model=settings.GROQ_MODEL,
             temperature=0.0,
-            max_tokens=220,
+            max_tokens=350,
         )
         raw = resp.choices[0].message.content.strip()
-        raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
+        json_match = re.search(r"\{[\s\S]*\}", raw)
+        if json_match:
+            raw = json_match.group(0)
+        else:
+            raw = re.sub(r"^```(?:json)?|```$", "", raw, flags=re.MULTILINE).strip()
         result = json.loads(raw)
         result["needs_room"]  = bool(result.get("needs_room", False))
         result["staff_role"]  = result.get("staff_role", "watchmen") or "watchmen"
