@@ -13,6 +13,7 @@ Handles:
 """
 
 from pathlib import Path
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, UploadFile, File, Depends
 
 from app.core.security import get_current_user, require_admin
@@ -184,3 +185,56 @@ async def mark_notification_read(notif_id: str, current_user=Depends(get_current
     except Exception as e:
         logger.exception(f"[Notices] mark_notification_read error for {notif_id}: {e}")
         raise InternalServerErrorException("Failed to mark notification as read.")
+
+
+# ── Admin: Knowledge Gaps & Learned FAQs ───────────────────────────────────────
+
+import app.repositories.knowledge_gap_repository as gap_repo
+from pydantic import BaseModel
+
+class ApproveGapRequest(BaseModel):
+    answer: str
+    question: Optional[str] = None
+
+@router.get("/api/admin/knowledge-gaps")
+async def list_knowledge_gaps(status: str = "pending", _admin=Depends(require_admin)):
+    """Return all unanswered or trending student questions for admin review."""
+    try:
+        return gap_repo.get_all_gaps(status=status)
+    except Exception as e:
+        logger.exception(f"[Notices] list_knowledge_gaps error: {e}")
+        raise InternalServerErrorException("Failed to fetch knowledge gaps.")
+
+
+@router.post("/api/admin/knowledge-gaps/{gap_id}/approve")
+async def approve_knowledge_gap(
+    gap_id: str,
+    req: ApproveGapRequest,
+    _admin=Depends(require_admin),
+):
+    """Admin approves/answers a knowledge gap. Automatically ingests it into RAG vector memory."""
+    try:
+        gap = gap_repo.get_gap_by_id(gap_id)
+        question = req.question or (gap.get("query") if gap else "FAQ")
+        title = f"FAQ: {question[:60]}"
+        content = f"Question: {question}\n\nAnswer: {req.answer}"
+
+        # Ingest directly into RAG as an official notice / FAQ chunk
+        await notice_service.post_text_notice(title, content)
+        gap_repo.resolve_gap(gap_id, "resolved")
+        return {"message": "FAQ successfully answered and ingested into knowledge base."}
+    except Exception as e:
+        logger.exception(f"[Notices] approve_knowledge_gap error: {e}")
+        raise InternalServerErrorException("Failed to ingest FAQ into knowledge base.")
+
+
+@router.delete("/api/admin/knowledge-gaps/{gap_id}")
+async def dismiss_knowledge_gap(gap_id: str, _admin=Depends(require_admin)):
+    """Dismiss a knowledge gap without ingesting it."""
+    try:
+        gap_repo.delete_gap(gap_id)
+        return {"message": "Knowledge gap dismissed."}
+    except Exception as e:
+        logger.exception(f"[Notices] dismiss_knowledge_gap error: {e}")
+        raise InternalServerErrorException("Failed to dismiss knowledge gap.")
+

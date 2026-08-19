@@ -9,6 +9,7 @@ Handles:
   GET    /api/chats/{chat_id}/messages
 """
 
+import asyncio
 import json
 from typing import Any, Dict, AsyncGenerator
 from fastapi import APIRouter, Depends
@@ -23,6 +24,7 @@ import app.repositories.user_repository as user_repo
 import app.repositories.chat_repository as chat_repo
 import app.repositories.complaint_repository as complaint_repo
 import app.services.chat_service as chat_service
+import app.services.memory_service as memory_service
 from app.services.complaint_agent import classify_complaint
 from app.services.complaint_dialogue_agent import (
     has_active_complaint_session,
@@ -48,6 +50,12 @@ async def _stream_response(
     Core SSE generator shared by the /stream endpoint.
     Handles complaint sessions (instant) and RAG (streamed tokens).
     """
+    # ── Background fact extraction (0ms streaming impact) ─────────────────────
+    try:
+        asyncio.create_task(asyncio.to_thread(memory_service.extract_and_save_user_facts, user_id, query))
+    except Exception as e:
+        logger.debug(f"[Chat] Fact extraction background error: {e}")
+
     # ── Complaint dialogue turn (instant, no streaming needed) ─────────────────
     if has_active_complaint_session(chat_id):
         dialogue_reply = handle_complaint_turn(
@@ -84,7 +92,7 @@ async def _stream_response(
         logger.warning(f"[ChatStream] Complaint detection error (falling back to RAG): {e}")
 
     # ── RAG streaming ──────────────────────────────────────────────────────────
-    chat_history = chat_repo.get_recent_history(chat_id, limit=6)
+    chat_history = chat_repo.get_recent_history(chat_id, limit=12)
     full_answer = []
 
     async for sse_line in get_answer_stream(
@@ -92,6 +100,7 @@ async def _stream_response(
         metadata_filter=metadata_filter,
         user_info=user_info,
         chat_history=chat_history,
+        chat_id=chat_id,
     ):
         # Parse the SSE line to collect the full answer for DB persistence
         try:

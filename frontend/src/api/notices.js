@@ -62,3 +62,23 @@ export async function markAllNotificationsReadApi() {
     method: 'PATCH',
   });
 }
+
+export async function getKnowledgeGapsApi() {
+  return apiClient('/api/admin/knowledge-gaps', {
+    method: 'GET',
+  });
+}
+
+export async function approveKnowledgeGapApi(gapId, answer, question) {
+  return apiClient(`/api/admin/knowledge-gaps/${gapId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ answer, question }),
+  });
+}
+
+export async function dismissKnowledgeGapApi(gapId) {
+  return apiClient(`/api/admin/knowledge-gaps/${gapId}`, {
+    method: 'DELETE',
+  });
+}
+

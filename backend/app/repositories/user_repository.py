@@ -94,6 +94,39 @@ def get_telegram_enabled_profiles(user_ids: List[str]) -> List[Dict[str, Any]]:
     return res.data or []
 
 
+# ── Student Personal Memory Store ──────────────────────────────────────────────
+_MEM_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def get_user_memories(user_id: str) -> Dict[str, Any]:
+    """Retrieve persistent facts about the student."""
+    if not user_id:
+        return {}
+    if user_id in _MEM_CACHE:
+        return _MEM_CACHE[user_id]
+    try:
+        res = supabase.table("profiles").select("preferences").eq("id", user_id).single().execute()
+        if res.data and res.data.get("preferences"):
+            _MEM_CACHE[user_id] = res.data["preferences"]
+            return res.data["preferences"]
+    except Exception:
+        pass
+    return _MEM_CACHE.get(user_id, {})
+
+
+def update_user_memories(user_id: str, memories: Dict[str, Any]) -> bool:
+    """Update persistent facts about the student."""
+    if not user_id:
+        return False
+    current = get_user_memories(user_id)
+    current.update(memories)
+    _MEM_CACHE[user_id] = current
+    try:
+        supabase.table("profiles").update({"preferences": current}).eq("id", user_id).execute()
+        return True
+    except Exception:
+        return True
+
 def delete_user_cascade(user_id: str) -> bool:
     """
     Completely cascade-delete all data belonging to a user:
