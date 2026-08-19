@@ -92,3 +92,66 @@ def get_telegram_enabled_profiles(user_ids: List[str]) -> List[Dict[str, Any]]:
         .execute()
     )
     return res.data or []
+
+
+def delete_user_cascade(user_id: str) -> bool:
+    """
+    Completely cascade-delete all data belonging to a user:
+    1. Chat messages for all user's chats
+    2. User's chats
+    3. Complaint votes cast by user
+    4. Complaints filed by user (and their votes/actions)
+    5. User notifications
+    6. Profile record
+    7. Supabase Auth user record
+    """
+    try:
+        # 1. Delete all chat messages for this user's chats
+        user_chats = supabase.table("chats").select("id").eq("user_id", user_id).execute()
+        if user_chats.data:
+            chat_ids = [c["id"] for c in user_chats.data]
+            supabase.table("messages").delete().in_("chat_id", chat_ids).execute()
+
+        # 2. Delete all chats
+        supabase.table("chats").delete().eq("user_id", user_id).execute()
+
+        # 3. Delete all complaint votes cast by user
+        try:
+            supabase.table("complaint_votes").delete().eq("user_id", user_id).execute()
+        except Exception:
+            pass
+
+        # 4. Delete all complaints filed by user
+        try:
+            user_complaints = supabase.table("complaints").select("id").eq("user_id", user_id).execute()
+            if user_complaints.data:
+                for comp in user_complaints.data:
+                    cid = comp["id"]
+                    try:
+                        supabase.table("complaint_votes").delete().eq("complaint_id", cid).execute()
+                    except Exception:
+                        pass
+                    try:
+                        supabase.table("complaint_actions").delete().eq("complaint_id", cid).execute()
+                    except Exception:
+                        pass
+                supabase.table("complaints").delete().eq("user_id", user_id).execute()
+        except Exception:
+            pass
+
+        # 5. Delete user notifications
+        supabase.table("user_notifications").delete().eq("user_id", user_id).execute()
+
+        # 6. Delete profile
+        supabase.table("profiles").delete().eq("id", user_id).execute()
+
+        # 7. Delete auth user via Supabase admin
+        try:
+            supabase.auth.admin.delete_user(user_id)
+        except Exception:
+            pass
+
+        return True
+    except Exception as e:
+        print(f"[UserRepo] delete_user_cascade error for {user_id}: {e}")
+        return False

@@ -37,6 +37,12 @@ def sign_up(email: str, password: str, name: str, username: str, scholar_id: str
 
     if not email or "@" not in email:
         raise ValueError("Please enter a valid email address.")
+    
+    # Strict NIT Silchar Institutional Email Check
+    domain = email.split("@")[-1]
+    if domain != "nits.ac.in" and not domain.endswith(".nits.ac.in"):
+        raise ValueError("Registration is restricted to official NIT Silchar email addresses (@nits.ac.in or @dept.nits.ac.in).")
+
     if len(password) < 6:
         raise ValueError("Password must be at least 6 characters.")
     if not re.match(r"^\d{7}$", scholar_id):
