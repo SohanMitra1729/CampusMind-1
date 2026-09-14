@@ -440,21 +440,26 @@ Student sends message
 
 ### Complaint Filing Flow
 ```
-Student describes problem in chat
+Student describes a problem naturally in the chat
+  (e.g. "My room fan is not working" / "Mess food is very bad today")
   ↓
-classify_complaint() — LLM assigns category + staff_role + needs_room + scope
+classify_complaint() — LLM detects complaint intent (confidence >= 0.6)
+  assigns: category + staff_role + needs_room + scope + duplicate_of_id
   ↓
-ComplaintBanner appears in UI
+dialogue_agent replies in chat:
+  "Which hostel are you in?" → student replies → fuzzy matched against DB
+  "What's your room number?" → only asked if needs_room=True (room-specific issues)
+  Hostel-wide issues (mess, corridor, power) skip the room question entirely
   ↓
-dialogue_agent: asks hostel (fuzzy matched) → asks room if needs_room=True
+Bot confirms submission in chat with complaint ID and assigned staff role
   ↓
 complaint saved to DB → two-pass staff routing:
   Pass 1: matching role + matching hostel
-  Pass 2: matching role + any hostel (fallback)
+  Pass 2: matching role + any hostel (fallback — no complaint goes unrouted)
   ↓
 Staff Telegram bot forwards complaint → [✅ Ack] [✔️ Resolve] inline buttons
   ↓
-Staff taps button → DB status updated instantly → student notified
+Staff taps button → DB status updated instantly → student sees update in chat
 ```
 
 ### Knowledge Gap Self-Learning Flow
